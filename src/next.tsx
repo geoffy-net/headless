@@ -189,7 +189,11 @@ export function createGeoffyTextRoute(
  */
 export function createGeoffyRevalidateRoute(config: {
   secret: string;
-  revalidateTag: (tag: string) => void;
+  // Accepts extra parameters so Next's own `revalidateTag` stays assignable. Next 16 widened
+  // it to `(tag: string, profile: string | CacheLifeConfig)`, and a two-parameter function is
+  // not assignable to a one-parameter type — so a merchant passing `revalidateTag` straight
+  // from `next/cache`, as the README tells them to, would fail `next build`'s type check.
+  revalidateTag: (tag: string, ...rest: never[]) => void;
 }) {
   return async function POST(request: Request): Promise<Response> {
     // The header carries an HMAC of the body, never the secret itself. A raw secret could be
