@@ -187,9 +187,8 @@ export async function fetchGeoffyText(
     // served somebody's markup as this site's llms.txt, with a successful status. That is
     // the very failure `createGeoffyTextRoute` documents, arriving from the other side.
     //
-    // Observed, not theorised: while the artifact routes were unreleased, the origin
-    // answered these paths with a 302 to the Geoffy dashboard, and this function returned
-    // its HTML. `redirect: "error"` closes that path and this closes the rest of the class.
+    // `redirect: "error"` closes the redirect-to-an-HTML-page path; the content-type gate
+    // below closes the rest of the class.
     //
     // Both types are ours: the API serves agents.md as text/markdown and the others as
     // text/plain.
@@ -332,11 +331,11 @@ export const GEOFFY_CACHE_CONTROL =
 /**
  * Content types the namespace can legitimately answer with.
  *
- * A 200 is not proof the response is ours — `fetchGeoffyText` learned that from a real
- * incident (the origin answered these paths with a redirect to the Geoffy dashboard, and the
- * HTML came back with a 200). The proxy is the same hop with a wider path space, so it needs
- * the same gate: without it, any HTML the origin emits is republished as SAME-ORIGIN content
- * on the merchant's storefront, where it runs against their shopper's session.
+ * A 200 is not proof the response is ours — an upstream error page, CDN interstitial or
+ * redirect target answers 200 just as readily. `fetchGeoffyText` gates on this for the same
+ * reason; the proxy is the same hop with a wider path space, so it needs the same gate.
+ * Without it, any HTML the origin emits is republished as SAME-ORIGIN content on the
+ * merchant's storefront, where it runs against their shopper's session.
  *
  * `text/html` is on the list because guide pages genuinely are HTML, and those are served
  * with `sandbox` below rather than excluded.

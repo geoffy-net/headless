@@ -269,9 +269,8 @@ describe("the fixes this PR's own review found", () => {
   });
 
   it("refuses a 200 whose content type is not one the namespace can serve", async () => {
-    // The incident fetchGeoffyText already learned from: a dashboard shell or CDN
-    // interstitial answered 200. Republishing it would put third-party HTML on the
-    // merchant's own origin.
+    // Same gate as fetchGeoffyText: an error page or CDN interstitial answers 200 too.
+    // Republishing it would put third-party HTML on the merchant's own origin.
     stubFetch({ status: 200, contentType: "application/pdf", body: "%PDF-1.4" });
 
     const res = await handleGeoffyProxy({ siteKey: "sk" }, req("/apps/geoffy/sitemap.xml"));

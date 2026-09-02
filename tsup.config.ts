@@ -7,11 +7,9 @@ export default defineConfig({
   entry: ["src/client.ts", "src/next.tsx", "src/astro.ts"],
   format: ["esm"],
   dts: true,
-  // No sourcemaps in the published tarball. They ship `sourcesContent`, i.e. the entire
-  // TypeScript source, and these files are dense with internal engineering context —
-  // ticket IDs, our dev origin, and post-mortems of defects we have since fixed. None of
-  // it is exploitable and none of it helps a merchant debug their storefront, so it does
-  // not belong on a public registry. The `.d.ts` files carry the documentation that does.
+  // No sourcemaps in the published tarball: they embed `sourcesContent`, i.e. the entire
+  // TypeScript source. A merchant debugging their storefront does not need it, and the
+  // `.d.ts` files carry the documentation that does help.
   sourcemap: false,
   clean: true,
   treeshake: true,
