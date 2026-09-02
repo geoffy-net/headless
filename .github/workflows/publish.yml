@@ -1,0 +1,55 @@
+# Publishes to npm via trusted publishing (OIDC).
+#
+# There is no NPM_TOKEN, deliberately. npm mints a short-lived, job-scoped credential from
+# the OIDC token GitHub hands this workflow, so there is no long-lived registry secret in
+# this repo to leak, and nothing to rotate.
+#
+# A trusted publisher can only be configured for a package that already exists, so the first
+# publish is manual and every one after it runs here. See RELEASING.md.
+
+name: publish
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The whole mechanism. Without it GitHub mints no OIDC token, npm has nothing to
+      # verify, and the publish falls back to looking for a token that does not exist.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # 22, not 20: trusted publishing needs Node >= 22.14.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm >= 11.5.1, which is newer than the npm bundled with any
+      # Node that setup-node installs. Without this the publish fails asking for auth.
+      - run: npm install -g npm@latest
+
+      - run: npm install
+
+      # `prepublishOnly` also runs these, but a failure there aborts mid-publish. Running
+      # them first means a red suite never reaches the registry step at all.
+      - run: npm run typecheck
+      - run: npm test
+
+      # Refuse to publish a tag whose version does not match package.json. Without this,
+      # a mistyped tag ships the previous version's contents under a new number.
+      - name: Tag matches package.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p 'require("./package.json").version')"
+          [ "$tag" = "$pkg" ] || { echo "tag $tag != package.json $pkg"; exit 1; }
+
+      # `--provenance` is passed explicitly. Trusted publishing is documented as generating
+      # provenance on its own, and in practice does not always — the flag costs nothing and
+      # removes the doubt.
+      - run: npm publish --provenance --access public

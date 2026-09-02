@@ -1,0 +1,79 @@
+{
+  "name": "@geoffy/headless",
+  "version": "0.1.0",
+  "description": "Server-side Geoffy discovery surfaces for a custom-built storefront (Next.js, Astro).",
+  "keywords": [
+    "geoffy",
+    "geo",
+    "aeo",
+    "llms-txt",
+    "json-ld",
+    "schema-org",
+    "structured-data",
+    "ai-crawlers",
+    "nextjs",
+    "astro",
+    "headless-commerce",
+    "ecommerce",
+    "seo"
+  ],
+  "author": "Geoffy <hello@geoffy.ai> (https://geoffy.ai)",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js"
+    },
+    "./next": {
+      "types": "./dist/next.d.ts",
+      "import": "./dist/next.js"
+    },
+    "./astro": {
+      "types": "./dist/astro.d.ts",
+      "import": "./dist/astro.js"
+    }
+  },
+  "main": "./dist/client.js",
+  "types": "./dist/client.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/geoffy-net/headless.git"
+  },
+  "homepage": "https://github.com/geoffy-net/headless#readme",
+  "bugs": {
+    "url": "https://github.com/geoffy-net/headless/issues"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run test",
+    "test": "tsup && node --test"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "^18.3.12",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.3",
+    "react": "^18.3.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
