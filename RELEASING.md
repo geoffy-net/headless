@@ -37,39 +37,35 @@ a wrong export condition passes every other check and fails only here.
 
 ## Publish
 
-Releases go out from CI via **trusted publishing (OIDC)**: npm mints a short-lived,
-job-scoped credential from the token GitHub hands the workflow, so there is no long-lived
-registry secret in this repo and nothing to rotate.
-
-A trusted publisher can only be configured for a package that already exists, so the first
-version is published by hand and every version after it ships from
-`.github/workflows/publish.yml`.
-
-### Every release
+Every release:
 
 ```bash
 npm version <patch|minor|major>             # tags the commit; never hand-edit the version
 git push --follow-tags                      # the tag fires .github/workflows/publish.yml
 ```
 
-`prepublishOnly` runs `typecheck` then `test`, and the test script rebuilds — so a stale
-`dist/` and a red suite both stop the publish. The workflow runs both again first, so a
-failure never reaches the registry step at all.
+That is the whole process. The workflow typechecks, runs the tests, checks the tag matches
+`package.json`, and publishes to npm via trusted publishing (OIDC) — no token to store and
+nothing to rotate.
 
-Three things in the workflow that are easy to lose in an edit, all load-bearing:
+### Notes
+
+`prepublishOnly` runs `typecheck` then `test`, and the test script rebuilds, so a stale
+`dist/` and a red suite both stop a publish. The workflow runs both again first, so a failure
+never reaches the registry step.
+
+Three things in the workflow are load-bearing and easy to lose in an edit:
 `permissions: id-token: write` (no OIDC token without it), `npm install -g npm@latest`
-(trusted publishing needs npm >= 11.5.1, newer than what any setup-node Node ships), and
-Node 22 (>= 22.14 is the floor for the same feature).
+(trusted publishing needs npm >= 11.5.1, newer than the npm any setup-node Node ships), and
+Node 22 (>= 22.14 for the same feature).
 
 `repository.url` in `package.json` must keep pointing at this repo — provenance cross-checks
 it, and a mismatch fails the publish.
 
-After a release, run the tarball probe above against the *published* package rather than a
-local `.tgz`.
-
-The published artifact deliberately contains no sourcemaps, and nothing outside `files`.
-Check with `npm pack --dry-run` before every release; the expected list is `LICENSE`,
-`README.md`, `package.json` and seven files under `dist/`.
+The published artifact contains no sourcemaps and nothing outside `files`. Check with
+`npm pack --dry-run`; the expected list is `LICENSE`, `README.md`, `package.json` and seven
+files under `dist/`. After a release, run the tarball probe above against the *published*
+package rather than a local `.tgz`.
 
 ## Compatibility
 
