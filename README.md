@@ -761,9 +761,8 @@ Mounting the namespace already gives you the middle row at no extra work. This f
 top one, and the difference is your product pages — the pages you most want an engine to
 re-read the moment you publish.
 
-Geoffy resolves which of the three you are in by fetching your site, not by assuming. If the
-root file is absent it submits what the namespace can authorise and drops the rest, rather than
-sending requests an engine would accept and discard.
+Nothing is submitted that the key file in place cannot authorise, so skipping this costs you
+your product pages and nothing else.
 
 ### If your key ever changes
 
