@@ -162,6 +162,26 @@ export function createGeoffyTextRoute(
 }
 
 /**
+ * The cache-life profile this route hands Next 16's `revalidateTag`, and the reason it is not
+ * the `"max"` that Next's own examples recommend.
+ *
+ * The second argument does NOT say how long to keep the data. `revalidateTag` marks the tag
+ * stale immediately in every case; the profile says only how long STALE content may still be
+ * served while the revalidation runs behind it. So `"max"` — a one-year window — means the
+ * first visitor after a publish is still served the pre-publish page, which is exactly the
+ * delay this route exists to remove. `{ expire: 0 }` serves no stale content, so the next
+ * request blocks and gets the new content.
+ *
+ * That is Next's own guidance for an invalidation arriving from outside a Server Action:
+ * `updateTag` is unavailable in a Route Handler, and a webhook should pass `{ expire: 0 }`.
+ *
+ * It is also what the deprecated one-argument `revalidateTag(tag)` already does, so this
+ * changes no behaviour for a site on Next 16 — it stops relying on a deprecated call that
+ * Next says may be removed. On Next 15 the argument is ignored, harmlessly.
+ */
+const EXPIRE_NOW = { expire: 0 } as const;
+
+/**
  * The endpoint Geoffy calls to tell your site a product changed.
  *
  *   // app/api/geoffy/revalidate/route.ts   <- this exact path
@@ -181,7 +201,9 @@ export function createGeoffyTextRoute(
  * to be updated and redeployed or this route starts rejecting real calls as forged.
  *
  * `revalidateTag` is passed in rather than imported here so this package does not depend on
- * a specific Next version's module layout.
+ * a specific Next version's module layout. Pass it BARE — the profile Next 16 wants is supplied
+ * here, by `EXPIRE_NOW` above, so a merchant never has to reason about cache semantics to mount
+ * a webhook.
  *
  * Losing this call is survivable by design — the revalidate window refreshes the page
  * anyway. It exists to turn "within the hour" into "within seconds", not to be the only
@@ -189,11 +211,11 @@ export function createGeoffyTextRoute(
  */
 export function createGeoffyRevalidateRoute(config: {
   secret: string;
-  // Accepts extra parameters so Next's own `revalidateTag` stays assignable. Next 16 widened
-  // it to `(tag: string, profile: string | CacheLifeConfig)`, and a two-parameter function is
-  // not assignable to a one-parameter type — so a merchant passing `revalidateTag` straight
-  // from `next/cache`, as the README tells them to, would fail `next build`'s type check.
-  revalidateTag: (tag: string, ...rest: never[]) => void;
+  // The second parameter is optional so BOTH versions of Next's own `revalidateTag` stay
+  // assignable and the merchant can keep passing it bare: Next 15's is `(tag: string) => void`,
+  // and Next 16 widened it to `(tag: string, profile: string | CacheLifeConfig)`. This route
+  // supplies the profile itself (see the call sites below), so the merchant never chooses one.
+  revalidateTag: (tag: string, profile?: string | { expire?: number }) => void;
 }) {
   return async function POST(request: Request): Promise<Response> {
     // The header carries an HMAC of the body, never the secret itself. A raw secret could be
@@ -223,14 +245,14 @@ export function createGeoffyRevalidateRoute(config: {
     if (!handle && scope !== "namespace") return new Response("Bad request\n", { status: 400 });
 
     if (handle) {
-      config.revalidateTag(`geoffy:product:${handle}`);
-      config.revalidateTag("geoffy:root-files");
+      config.revalidateTag(`geoffy:product:${handle}`, EXPIRE_NOW);
+      config.revalidateTag("geoffy:root-files", EXPIRE_NOW);
     }
 
     // Always, for both shapes: a product publish changes that product's markdown twin and the
     // sitemap that lists it, and both are served through the namespace. Purging only the
     // product tag would leave the twin stale behind a fresh widget.
-    config.revalidateTag(GEOFFY_NAMESPACE_TAG);
+    config.revalidateTag(GEOFFY_NAMESPACE_TAG, EXPIRE_NOW);
     return new Response(JSON.stringify({ revalidated: true }), {
       headers: { "content-type": "application/json" },
     });

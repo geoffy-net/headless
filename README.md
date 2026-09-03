@@ -313,6 +313,12 @@ export const POST = createGeoffyRevalidateRoute({
 });
 ```
 
+**Pass `revalidateTag` bare — do not wrap it.** On Next 16 that function takes a second
+argument, a cache-life profile, and this route supplies it for you: `{ expire: 0 }`, so the next
+request after a publish gets the new content rather than the old one while the refresh runs
+behind it. Choosing a profile is our job, not yours. A wrapper here only overrides that with
+something less immediate, and Next 15's one-argument version stays accepted unchanged.
+
 **The path is fixed, and that is the whole configuration.** We call
 `https://<your public domain>/api/geoffy/revalidate` — built from the domain you already proved
 you own — so there is no address to enter anywhere and no way to enter it wrongly. Mount the
