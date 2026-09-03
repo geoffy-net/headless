@@ -492,6 +492,14 @@ your route.
 
 ---
 
+### 7. Search-engine index pings
+
+One static file, and it is identical on either framework, so it has a section of its own:
+[Search-engine index pings](#search-engine-index-pings). Skip it and your product pages are
+never hinted to the engines; everything else still works.
+
+---
+
 ## Astro
 
 ### 1. Environment
@@ -667,6 +675,101 @@ side reaches you on your next build rather than within the hour.
 On a fully static build this is evaluated once, at build time, so the `Sitemap:` line appears
 in your deployed robots.txt only if the namespace was already mounted when you built. Mount
 first, then deploy.
+
+---
+
+### 7. Search-engine index pings
+
+One static file, and it is identical on either framework, so it has a section of its own:
+[Search-engine index pings](#search-engine-index-pings). Skip it and your product pages are
+never hinted to the engines; everything else still works.
+
+---
+
+## Search-engine index pings
+
+When you publish, Geoffy tells Bing, Yandex, Naver, Seznam and Yep to come and recrawl the
+page, so your change is picked up in minutes rather than whenever a crawler next happens by.
+(Google does not take part in this protocol. Nothing here affects Google.)
+
+Those engines only accept the request if they can prove the domain is yours, and they prove it
+by fetching one file from your own site. Geoffy generates the key; you place the file. It is
+the same file on Next.js and Astro, and it is the last thing this guide asks of you.
+
+### The file
+
+Open your site's settings in Geoffy and find **Telling the engines when something changes**.
+It shows you both values:
+
+```
+Serve this file          public/9f2c41ab7e0d5836b1c4ae90f7d2e615.txt
+Containing exactly this  9f2c41ab7e0d5836b1c4ae90f7d2e615
+```
+
+The file name **is** the key, with `.txt` on the end, and the contents are the same key again
+and nothing else — no JSON, no heading, no trailing prose. A single trailing newline is fine.
+
+**Next.js** — create it at `public/<key>.txt`.
+**Astro** — create it at `public/<key>.txt`.
+
+Deploy, then confirm it is live at your root:
+
+```bash
+curl https://yourdomain.com/9f2c41ab7e0d5836b1c4ae90f7d2e615.txt
+# 9f2c41ab7e0d5836b1c4ae90f7d2e615
+```
+
+Geoffy's readiness check makes exactly that request and reports it as **Search-ping key
+file**. It compares the contents, not just the status — a catch-all route answering every path
+with your home page and a `200` is the usual way this looks done and is not.
+
+### This file is meant to be public — that is the mechanism
+
+It is not a credential, and treating it as one is the way this breaks. The file has to be
+readable by anyone, because a search engine reading it is precisely how your domain is proved.
+Do not put it behind authentication, a login wall, a geo rule or a bot filter. A `401`, a `403`
+or a challenge page there means the same thing as the file being absent.
+
+It is also not worth protecting, and it is worth saying why rather than asking you to take it
+on trust:
+
+- **Everything the key permits is scoped to your own domain.** It lets a request say "recrawl
+  these pages on yourdomain.com". The engine then goes and reads whatever your pages currently
+  say. There is no way to inject content, remove you from an index, or redirect anything.
+- **It is useless on any other domain.** An engine offered your key for someone else's host
+  fetches the file *there* and finds nothing.
+- **It is yours alone.** Every site gets a different key, and one key reveals nothing about
+  any other. That is the reason it is a long random-looking string rather than something
+  readable.
+
+The worst an exposed key achieves is somebody asking Bing to re-read pages you already
+publish. Set against that: without the file, nothing on your site is ever pinged.
+
+### Where the file sits decides which pages are covered
+
+This is the one detail worth understanding, because a file in the wrong place looks like it is
+working. A key file authorises only the directory it sits in — that is the protocol, not our
+rule — and an out-of-scope submission is accepted with a clean `200` and then quietly ignored.
+
+| Key file at | Covers |
+|---|---|
+| `/<key>.txt` — your site root, the file above | **your product pages**, your guides, the plain-text twins, the sitemap |
+| `/apps/geoffy/<key>.txt` — served for you by the namespace route in step 5 | guides, twins, the sitemap. **Not your product pages** |
+| nowhere | nothing is submitted |
+
+Mounting the namespace already gives you the middle row at no extra work. This file buys the
+top one, and the difference is your product pages — the pages you most want an engine to
+re-read the moment you publish.
+
+Geoffy resolves which of the three you are in by fetching your site, not by assuming. If the
+root file is absent it submits what the namespace can authorise and drops the rest, rather than
+sending requests an engine would accept and discard.
+
+### If your key ever changes
+
+Rare, and you will be told. The readiness check compares the *contents* of your file against
+the current key, so a stale file is reported as missing rather than passing on the strength of
+its name. Replace it with the new value and redeploy.
 
 ---
 
