@@ -22,10 +22,10 @@ jobs:
       # verify, and the publish falls back to looking for a token that does not exist.
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # 22, not 20: trusted publishing needs Node >= 22.14.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org

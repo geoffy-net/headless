@@ -35,6 +35,49 @@ node --input-type=module -e '
 That exercises the `exports` map, the build and the code together. A missing `files` entry or
 a wrong export condition passes every other check and fails only here.
 
+## One-time: the trusted publisher
+
+The workflow authenticates to npm with an OIDC token and nothing else, so npm has to be told
+which workflow to trust *before* CI can publish. This is a one-time setup on npmjs.com, and
+it cannot be done ahead of the first release — npm only offers the setting for a package that
+already exists, which is why 0.1.0 was published by hand.
+
+On https://www.npmjs.com/package/@geoffy/headless/access → Publishing access → Trusted
+publisher:
+
+| Field | Value |
+| --- | --- |
+| Publisher | GitHub Actions |
+| Organization or user | `geoffy-net` |
+| Repository | `headless` |
+| Workflow filename | `publish.yml` |
+| Environment name | *leave blank* |
+| Allowed actions | allow direct publish |
+
+Two of those are easy to get wrong, and both fail the same confusing way — a `404` on the
+`PUT`, as if the package did not exist:
+
+**Environment name must stay blank** unless the job in `publish.yml` declares a matching
+`environment:`. A name here that the workflow does not set means the OIDC claim never matches.
+
+**Direct publish must be allowed.** Left unchecked, the workflow can only *stage* a version:
+it uploads, then waits for someone to promote it by hand on the website. That is npm's
+default because it is the right answer for a package with several maintainers. It is not the
+right answer here — the release is already gated on a matching tag, a clean typecheck and a
+green suite, and the person who would click promote is the person who pushed the tag.
+
+Skipping this step is not silent. The publish fails with:
+
+```
+npm error 404 Not Found - PUT https://registry.npmjs.org/@geoffy%2fheadless
+npm error 404  The requested resource '@geoffy/headless@<version>' could not be found
+               or you do not have permission to access it.
+```
+
+A `404` for a package that plainly exists is npm saying the request arrived unauthenticated.
+Nothing partial reaches the registry, so the fix is to add the trusted publisher and re-run
+the failed job — the tag and the commit are already correct.
+
 ## Publish
 
 Every release:
@@ -66,6 +109,11 @@ The published artifact contains no sourcemaps and nothing outside `files`. Check
 `npm pack --dry-run`; the expected list is `LICENSE`, `README.md`, `package.json` and seven
 files under `dist/`. After a release, run the tarball probe above against the *published*
 package rather than a local `.tgz`.
+
+`npm view` reads through a CDN cache and can report the previous version for several minutes
+after a successful publish. That is the read path lagging, not a failed release; check
+`https://registry.npmjs.org/@geoffy%2Fheadless` directly before concluding anything went
+wrong.
 
 ## Compatibility
 
