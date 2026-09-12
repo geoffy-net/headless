@@ -853,7 +853,14 @@ that same site key for as long as you like:
   server-rendered, at the right URLs.
 
 A local run can only show you content that is already **published**. Artifact endpoints serve
-published bundles and 404 for everything else, so localhost is not a way to look at a draft.
+published bundles and nothing else, so localhost is not a way to look at a draft.
+
+For a product with nothing published yet, a verified site's product endpoint answers with a
+successful `{ "handle": "…", "published": false }` rather than a 404. It is a normal state,
+not an error, so your framework can cache it like any other answer, and `fetchGeoffyProduct`
+returns `null` for it: the component renders nothing. Publishing purges that cached answer
+through the revalidate route. The plain-text and guide pages under `/apps/geoffy/` still
+answer 404 when nothing is published, because to a crawler that page does not exist.
 
 ### The dev cache will lie to you
 

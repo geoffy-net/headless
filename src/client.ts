@@ -113,6 +113,11 @@ export interface GeoffyClientOptions {
 
 export interface GeoffyProductArtifact {
   handle: string;
+  /**
+   * `true` on a published payload. Optional because an older Geoffy server does not send it;
+   * the presence of both surfaces is what makes a payload renderable, not this flag.
+   */
+  published?: true;
   /** The URL Geoffy published this product against. Compare it with your own canonical. */
   canonicalUrl: string;
   /** schema.org Product node, ready to serialise into a script tag. */
@@ -122,6 +127,21 @@ export interface GeoffyProductArtifact {
   publishedAt: string | null;
 }
 
+/**
+ * Geoffy's answer when the site is set up and verified but nothing is published for this
+ * handle yet. A normal state, not an error: most product pages are in it until you publish.
+ *
+ * It arrives as a successful response so your framework can cache it like any other answer,
+ * and it carries no surfaces, so there is nothing to render.
+ */
+export interface GeoffyProductNotPublished {
+  handle: string;
+  published: false;
+}
+
+/** Every successful answer the product endpoint gives. */
+export type GeoffyProductResponse = GeoffyProductArtifact | GeoffyProductNotPublished;
+
 function artifactUrl(opts: GeoffyClientOptions, path: string): string {
   return `${resolveGeoffyOrigin(opts)}/headless/${encodeURIComponent(opts.siteKey)}${path}`;
 }
@@ -129,9 +149,12 @@ function artifactUrl(opts: GeoffyClientOptions, path: string): string {
 /**
  * Fetch one product's artifacts.
  *
- * Returns `null` for every failure mode — not published, site not verified, network error,
- * timeout, malformed response. The caller cannot tell them apart and does not need to: in
- * all of them the right thing to render is nothing.
+ * Returns `null` for every case with nothing to render — not published yet, site not
+ * verified, network error, timeout, malformed response. The caller does not need to tell
+ * them apart: in all of them the right thing to render is nothing.
+ *
+ * "Not published yet" arrives two ways, and both give `null`: a successful
+ * `{ published: false }` answer from a current Geoffy server, and a 404 from an older one.
  */
 export async function fetchGeoffyProduct(
   opts: GeoffyClientOptions,
@@ -152,12 +175,20 @@ export async function fetchGeoffyProduct(
     } as RequestInit);
 
     if (!res.ok) return null;
-    const body = (await res.json()) as GeoffyProductArtifact;
+    // Typed as the documented union, but not trusted to BE it: the checks below are what
+    // decide, so a malformed body (null, an array, missing fields) still ends in `null`.
+    const body = (await res.json()) as GeoffyProductResponse | null;
+    if (!body || typeof body !== "object") return null;
+
+    // Nothing published for this handle yet. Checked by name before the surfaces, so the
+    // answer is handled as the state it is, not as a malformed payload that happens to fail
+    // the check below.
+    if (body.published === false) return null;
 
     // Both surfaces or neither. A page carrying our structured data without the visible
     // widget makes claims to a crawler that a shopper cannot see, which is the one outcome
     // this product must never produce.
-    if (!body?.jsonLd || !body?.widgetHtml) return null;
+    if (!body.jsonLd || !body.widgetHtml) return null;
     return body;
   } catch {
     return null;

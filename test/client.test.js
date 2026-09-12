@@ -12,6 +12,7 @@ import { after, beforeEach, describe, it } from "node:test";
 import {
   compareCanonical,
   DEFAULT_GEOFFY_ORIGIN,
+  fetchGeoffyProduct,
   fetchGeoffyText,
   skippedMarker,
 } from "../dist/client.js";
@@ -157,6 +158,83 @@ describe("against a real server", () => {
       "llms.txt",
     );
     assert.equal(body, null);
+  });
+});
+
+/**
+ * The product fetch.
+ *
+ * Geoffy answers a set-up site whose handle has nothing published with a successful
+ * `{ handle, published: false }` body. Older servers answered 404. Both mean "render nothing",
+ * and so does every malformed answer.
+ */
+describe("fetchGeoffyProduct", () => {
+  const PUBLISHED = {
+    handle: "pumps",
+    published: true,
+    canonicalUrl: "https://shop.example/en/p/pumps",
+    jsonLd: { "@type": "Product", name: "Pump" },
+    widgetHtml: '<section data-geoffy-product="pumps"></section>',
+    publishedAt: "2026-09-01T00:00:00.000Z",
+  };
+  const json = (body, status = 200) =>
+    stubFetch({ status, contentType: "application/json; charset=utf-8", body: JSON.stringify(body) });
+
+  it("returns the payload for a published product", async () => {
+    json(PUBLISHED);
+    assert.deepEqual(await fetchGeoffyProduct({ siteKey: "sk" }, "pumps"), PUBLISHED);
+  });
+
+  it("returns a payload from an older server that does not send `published`", async () => {
+    const { published: _omitted, ...legacy } = PUBLISHED;
+    json(legacy);
+    assert.deepEqual(await fetchGeoffyProduct({ siteKey: "sk" }, "pumps"), legacy);
+  });
+
+  it("returns null for a successful not-published answer", async () => {
+    const calls = json({ handle: "pumps", published: false });
+    assert.equal(await fetchGeoffyProduct({ siteKey: "sk" }, "pumps"), null);
+    // Guard the guard: the request was made, so the null is the answer and not a skipped call.
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].url.endsWith("/headless/sk/products/pumps"), calls[0].url);
+  });
+
+  it("returns null for published:false even if surfaces are present", async () => {
+    // The flag is the server's statement of state. A body claiming both must not render.
+    json({ ...PUBLISHED, published: false });
+    assert.equal(await fetchGeoffyProduct({ siteKey: "sk" }, "pumps"), null);
+  });
+
+  it("still returns null for the 404 an older server sends", async () => {
+    json({ error: { code: "NOT_FOUND", message: "Not found" } }, 404);
+    assert.equal(await fetchGeoffyProduct({ siteKey: "sk" }, "pumps"), null);
+  });
+
+  it("still returns null for any other non-OK status", async () => {
+    json({ error: { code: "INTERNAL_ERROR" } }, 503);
+    assert.equal(await fetchGeoffyProduct({ siteKey: "sk" }, "pumps"), null);
+  });
+
+  for (const [label, body] of [
+    ["a body with only one surface", { ...PUBLISHED, widgetHtml: "" }],
+    ["a null body", null],
+    ["a bare string", "published"],
+  ]) {
+    it(`returns null for a malformed answer (${label})`, async () => {
+      json(body);
+      assert.equal(await fetchGeoffyProduct({ siteKey: "sk" }, "pumps"), null);
+    });
+  }
+
+  it("returns null for a body that is not JSON", async () => {
+    stubFetch({ contentType: "text/html", body: "<!DOCTYPE html>" });
+    assert.equal(await fetchGeoffyProduct({ siteKey: "sk" }, "pumps"), null);
+  });
+
+  it("caches under the per-product tag the revalidate route purges", async () => {
+    const calls = json({ handle: "pumps", published: false });
+    await fetchGeoffyProduct({ siteKey: "sk" }, "pumps");
+    assert.deepEqual(calls[0].init.next.tags, ["geoffy:product:pumps"]);
   });
 });
 
