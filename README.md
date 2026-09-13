@@ -253,9 +253,33 @@ every locale is the tempting mistake: the other locales render the canonical loc
 and a structured-data node in the canonical locale's language, under a page written in another
 one. Nothing errors; the page simply makes a claim in the wrong language.
 
-**Pass `canonicalUrl` and you do not have to be careful about it.** Mount the component on
-every locale if that is simpler for you — it renders only on the page Geoffy published against
-and does nothing on the rest. That is why the argument is worth the line.
+**Pass `locale` and `canonicalUrl`, and you do not have to be careful about it.** Mount the
+component on every locale if that is simpler for you — it renders only on the page Geoffy
+published against, in the language it was written in, and does nothing on the rest:
+
+```tsx
+<GeoffyProduct
+  siteKey={process.env.GEOFFY_SITE_KEY!}
+  handle={handle}
+  locale={locale}            // the locale this route renders, e.g. "sr" or "de-DE"
+  canonicalUrl={canonical}   // this page's own canonical
+/>
+```
+
+**Pages Geoffy has nothing for cost no request.** The package reads one small list of the
+products Geoffy has published — with each one's language and path — and declines every other
+product page without asking Geoffy about it: an unpublished product, a translated page, or a
+page whose path is not the one Geoffy published against. The list is cached under the same tag
+the revalidate route already purges on every publish, so a newly published product appears on
+the next request after the purge. There is nothing to configure.
+
+If that list cannot be read — Geoffy slow, down, or answering something this version does not
+understand — the component falls back to asking about the product directly, exactly as older
+versions do. A problem on Geoffy's side never hides a published product.
+
+The Astro helper takes the same two values in its third argument
+(`getGeoffyProductMarkup(opts, handle, { locale, canonicalUrl })`). Astro has no data cache, so
+it keeps the list in memory for 30 seconds; a publish shows up within that window.
 
 If you want Geoffy on every locale today, the way to get it is one Geoffy site per locale —
 each with its own address, its own ownership check and its own catalogue. That works now, and
