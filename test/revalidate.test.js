@@ -61,15 +61,19 @@ describe("createGeoffyRevalidateRoute", () => {
     );
   });
 
-  it("purges the namespace alone for a guide publish, which names no product", async () => {
+  it("purges the root files and the namespace for a guide publish, which names no product", async () => {
     const { POST, calls } = spyRoute();
     const res = await post(POST, JSON.stringify({ scope: "namespace" }));
 
     assert.equal(res.status, 200);
+    // The root files are in the list because the agent document lists published guides.
     assert.deepEqual(
       calls.map((c) => c.tag),
-      [GEOFFY_NAMESPACE_TAG],
+      ["geoffy:root-files", GEOFFY_NAMESPACE_TAG],
     );
+    for (const call of calls) {
+      assert.deepEqual(call.profile, { expire: 0 }, `${call.tag} was purged without an immediate expiry`);
+    }
   });
 
   it("expires every purge immediately, so the next request is not served the pre-publish page", async () => {

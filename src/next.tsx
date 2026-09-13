@@ -244,10 +244,13 @@ export function createGeoffyRevalidateRoute(config: {
     const { handle, scope } = payload;
     if (!handle && scope !== "namespace") return new Response("Bad request\n", { status: 400 });
 
-    if (handle) {
-      config.revalidateTag(`geoffy:product:${handle}`, EXPIRE_NOW);
-      config.revalidateTag("geoffy:root-files", EXPIRE_NOW);
-    }
+    if (handle) config.revalidateTag(`geoffy:product:${handle}`, EXPIRE_NOW);
+
+    // Both shapes. The agent document (`llms.txt`, `llms-full.txt`, `agents.md`) lists the
+    // published products AND the published guides, so a guide publish changes it too. This was
+    // purged only for a product, and a guide stayed missing from `llms.txt` for the whole
+    // revalidate window after the guide page itself was live.
+    config.revalidateTag("geoffy:root-files", EXPIRE_NOW);
 
     // Always, for both shapes: a product publish changes that product's markdown twin and the
     // sitemap that lists it, and both are served through the namespace. Purging only the
