@@ -9,6 +9,8 @@
 
 import {
   compareCanonical,
+  decideFromManifest,
+  fetchGeoffyManifest,
   fetchGeoffyProduct,
   fetchGeoffyText,
   type GeoffyClientOptions,
@@ -32,6 +34,13 @@ export interface GeoffyProductProps extends GeoffyClientOptions {
    * there instead.
    */
   canonicalUrl?: string;
+  /**
+   * This page's language — the locale your route already renders in, e.g. `sr` or `de-DE`.
+   *
+   * Optional, and worth passing on a multilingual site. Geoffy's content is written in one
+   * language; on a page in another language this renders nothing, WITHOUT asking Geoffy.
+   */
+  locale?: string;
 }
 
 /**
@@ -52,7 +61,33 @@ export interface GeoffyProductProps extends GeoffyClientOptions {
  *     );
  *   }
  */
-export async function GeoffyProduct({ handle, canonicalUrl, ...opts }: GeoffyProductProps) {
+export async function GeoffyProduct({
+  handle,
+  canonicalUrl,
+  locale,
+  ...opts
+}: GeoffyProductProps) {
+  // The manifest first. A manifest we read can say "not here" without a product request; a
+  // manifest we could not read says nothing, and the per-product request below runs as before.
+  const manifest = await fetchGeoffyManifest(opts);
+  if (manifest) {
+    const decision = decideFromManifest(manifest, handle, { locale, canonicalUrl });
+    if (!decision.render) {
+      // Not published renders nothing, exactly as a not-published product answer always has.
+      if (decision.reason === "not-published") return null;
+      // A declined page leaves the inert marker, so a bare translated page can be diagnosed.
+      const detail = `handle ${handle} · page ${locale ?? ""} ${canonicalUrl ?? ""}`.trim();
+      return (
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: an inert marker this package
+        // built from its own strings, escaped by `serializeJsonLd`.
+        <div
+          data-geoffy-skipped=""
+          dangerouslySetInnerHTML={{ __html: skippedMarker(decision.reason, detail) }}
+        />
+      );
+    }
+  }
+
   const artifact = await fetchGeoffyProduct(opts, handle);
   if (!artifact) return null;
 

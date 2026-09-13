@@ -18,6 +18,8 @@
 
 import {
   compareCanonical,
+  decideFromManifest,
+  fetchGeoffyManifest,
   fetchGeoffyProduct,
   fetchGeoffyText,
   type GeoffyClientOptions,
@@ -25,6 +27,9 @@ import {
   handleGeoffyProxy,
   serializeJsonLd,
 } from "./client";
+
+/** How long the Astro helper reuses a manifest it read, in this process. */
+const ASTRO_MANIFEST_MEMO_MS = 30_000;
 
 export interface GeoffyProductMarkup {
   /** A complete `<script type="application/ld+json">` element. Put it in `<head>`. */
@@ -68,8 +73,13 @@ export interface GeoffyProductMarkup {
 export async function getGeoffyProductMarkup(
   opts: GeoffyClientOptions,
   handle: string,
-  page: { canonicalUrl?: string } = {},
+  page: { canonicalUrl?: string; locale?: string } = {},
 ): Promise<GeoffyProductMarkup | null> {
+  // The manifest first — see the Next component. Memoised in-process for ASTRO_MANIFEST_MEMO_MS
+  // because Astro has no data cache to hold it; a publish is picked up within that window.
+  const manifest = await fetchGeoffyManifest(opts, ASTRO_MANIFEST_MEMO_MS);
+  if (manifest && !decideFromManifest(manifest, handle, page).render) return null;
+
   const artifact = await fetchGeoffyProduct(opts, handle);
   if (!artifact) return null;
 

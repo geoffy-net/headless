@@ -197,6 +197,156 @@ export async function fetchGeoffyProduct(
   }
 }
 
+/* -------------------------------------------------------------------------------------------
+ * The product manifest
+ *
+ * Geoffy publishes content for ONE language of each product, at one path. A site that mounts the
+ * product component on every product page — every locale, published or not — asked Geoffy once
+ * per render, and on a translated route that request could never succeed. The manifest lists
+ * what is published, in which language, at which path, so the component can decline without
+ * asking.
+ *
+ * One rule decides everything below, and it is the reason this is safe to ship: a manifest we
+ * could NOT read skips nothing. Only a manifest we read, that positively says "not here", stops
+ * a request. Geoffy being slow or down must never blank a published page.
+ * ------------------------------------------------------------------------------------------- */
+
+/** One published product. `language` is absent when Geoffy could not tell — treated as unknown. */
+export interface GeoffyManifestProduct {
+  handle: string;
+  /** Primary language subtag of the published content, e.g. `en`. */
+  language?: string;
+  /** Path of the page the content was published against, e.g. `/products/widget`. */
+  path: string;
+}
+
+export interface GeoffyManifest {
+  manifestVersion: 1;
+  products: GeoffyManifestProduct[];
+}
+
+/**
+ * Fetch the product manifest. `null` for every failure AND for any shape this version does not
+ * understand — a newer manifest format must fall back to per-product requests, not be guessed at.
+ *
+ * Cached under `geoffy:root-files`, the tag every product publish already purges through the
+ * revalidate route, so a newly published product is listed as soon as that purge lands.
+ *
+ * `memoMs` keeps a read in this process for that long. Off by default: in Next the data cache
+ * does this job and honours the purge, which an in-process memo cannot. The Astro helper turns it
+ * on, because Astro has no data cache and no purge.
+ */
+export async function fetchGeoffyManifest(
+  opts: GeoffyClientOptions,
+  memoMs = 0,
+): Promise<GeoffyManifest | null> {
+  const key = `${resolveGeoffyOrigin(opts)}|${opts.siteKey}`;
+  const hit = manifestMemo.get(key);
+  if (memoMs > 0 && hit && Date.now() - hit.at < memoMs) return hit.manifest;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 4000);
+  try {
+    const res = await fetch(artifactUrl(opts, "/manifest.json"), {
+      signal: controller.signal,
+      redirect: "error",
+      next: { revalidate: opts.revalidateSeconds ?? 3600, tags: ["geoffy:root-files"] },
+    } as RequestInit);
+    if (!res.ok) return null;
+    const manifest = parseManifest(await res.json());
+    // Only a READ manifest is memoised. A failure is never remembered: the next render asks
+    // again, and in the meantime every page falls back to the per-product request.
+    if (manifest && memoMs > 0) manifestMemo.set(key, { manifest, at: Date.now() });
+    return manifest;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const manifestMemo = new Map<string, { manifest: GeoffyManifest; at: number }>();
+
+/** Test seam: forget every memoised manifest. */
+export function __clearGeoffyManifestMemo(): void {
+  manifestMemo.clear();
+}
+
+function parseManifest(body: unknown): GeoffyManifest | null {
+  if (!body || typeof body !== "object") return null;
+  const { manifestVersion, products } = body as { manifestVersion?: unknown; products?: unknown };
+  if (manifestVersion !== 1 || !Array.isArray(products)) return null;
+  const out: GeoffyManifestProduct[] = [];
+  for (const entry of products) {
+    if (!entry || typeof entry !== "object") return null;
+    const { handle, language, path } = entry as Record<string, unknown>;
+    // One malformed entry makes the WHOLE manifest unreadable. Dropping just that entry would
+    // turn "we could not read this" into "this handle is not published", and skip a page.
+    if (typeof handle !== "string" || !handle || typeof path !== "string") return null;
+    out.push({ handle, path, ...(typeof language === "string" ? { language } : {}) });
+  }
+  return { manifestVersion: 1, products: out };
+}
+
+/**
+ * May a page in `pageLanguage` show content in `contentLanguage`?
+ *
+ * Compares the primary language subtag (`en-GB` content matches an `en-US` page). `unknown`
+ * whenever either side is not a language tag, and callers RENDER on `unknown` — only a positive
+ * mismatch hides content.
+ */
+export function matchContentLanguage(
+  pageLanguage: string | null | undefined,
+  contentLanguage: string | null | undefined,
+): "match" | "mismatch" | "unknown" {
+  const page = primaryLanguage(pageLanguage);
+  const content = primaryLanguage(contentLanguage);
+  if (!page || !content) return "unknown";
+  return page === content ? "match" : "mismatch";
+}
+
+const LANGUAGE = /^[A-Za-z]{2,3}$/;
+const SCRIPT = /^[A-Za-z]{4}$/;
+const REGION = /^([A-Za-z]{2}|\d{3})$/;
+
+/** The lowercase primary subtag of a well-formed tag (`sr-Latn-RS` → `sr`), or `null`. */
+function primaryLanguage(raw: string | null | undefined): string | null {
+  if (typeof raw !== "string") return null;
+  const [language, ...rest] = raw.trim().split(/[-_]/).filter(Boolean);
+  if (!language || !LANGUAGE.test(language)) return null;
+  let i = 0;
+  if (rest[i] && SCRIPT.test(rest[i])) i += 1;
+  if (rest[i] && REGION.test(rest[i])) i += 1;
+  return i === rest.length ? language.toLowerCase() : null;
+}
+
+export type ManifestDecision =
+  | { render: true }
+  | { render: false; reason: "not-published" | "language-mismatch" | "canonical-mismatch" };
+
+/**
+ * Decide from a manifest that WAS read. (No manifest means no decision: fetch as before.)
+ *
+ * - handle not listed → nothing is published for it;
+ * - `locale` given and a positive language mismatch → this is a translated page;
+ * - `canonicalUrl` given and its path is not the published path → another page shares the handle.
+ */
+export function decideFromManifest(
+  manifest: GeoffyManifest,
+  handle: string,
+  page: { locale?: string; canonicalUrl?: string } = {},
+): ManifestDecision {
+  const entry = manifest.products.find((p) => p.handle === handle);
+  if (!entry) return { render: false, reason: "not-published" };
+  if (page.locale && matchContentLanguage(page.locale, entry.language) === "mismatch") {
+    return { render: false, reason: "language-mismatch" };
+  }
+  if (page.canonicalUrl && compareCanonical(page.canonicalUrl, entry.path) === "mismatch") {
+    return { render: false, reason: "canonical-mismatch" };
+  }
+  return { render: true };
+}
+
 /** Fetch one of the site-wide text artifacts. `null` on any failure. */
 export async function fetchGeoffyText(
   opts: GeoffyClientOptions,
