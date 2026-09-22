@@ -182,6 +182,22 @@ been told to set it, or unless you are following "Testing locally before you pub
 which is the usual reason to set one. A value that is not an absolute `http`/`https` URL is
 ignored and the default is used, so a typo cannot break your page.
 
+Read the key through one small helper, so a missing key stops you in development instead of
+quietly rendering pages without Geoffy content. Every snippet below uses it:
+
+```ts
+// lib/geoffy.ts
+export function geoffySiteKey(): string {
+  const key = process.env.GEOFFY_SITE_KEY ?? "";
+  // Loud in development, where you can fix it. In production a missing key never fails a
+  // page: Geoffy content is skipped, and the server log says so once.
+  if (!key && process.env.NODE_ENV === "development") {
+    throw new Error("GEOFFY_SITE_KEY is not set. Add it to .env.local and restart the dev server.");
+  }
+  return key;
+}
+```
+
 ```bash
 GEOFFY_REVALIDATE_SECRET=geoffy_rvs_... # optional; see step 4
 ```
@@ -195,6 +211,7 @@ else's.
 ```tsx
 // app/[lang]/products/[handle]/page.tsx
 import { GeoffyProduct } from "@geoffy/headless/next";
+import { geoffySiteKey } from "@/lib/geoffy";
 
 export default async function ProductPage({ params }) {
   const { lang, handle } = await params;
@@ -206,7 +223,7 @@ export default async function ProductPage({ params }) {
       {/* Renders the widget and the structured data together, right here.
           Renders nothing when Geoffy has nothing published or is unreachable. */}
       <GeoffyProduct
-        siteKey={process.env.GEOFFY_SITE_KEY!}
+        siteKey={geoffySiteKey()}
         handle={handle}
         canonicalUrl={`https://yourdomain.com/${lang}/products/${handle}`}
       />
@@ -259,7 +276,7 @@ published against, in the language it was written in, and does nothing on the re
 
 ```tsx
 <GeoffyProduct
-  siteKey={process.env.GEOFFY_SITE_KEY!}
+  siteKey={geoffySiteKey()}
   handle={handle}
   locale={locale}            // the locale this route renders, e.g. "sr" or "de-DE"
   canonicalUrl={canonical}   // this page's own canonical
@@ -293,19 +310,22 @@ One file each, three lines each:
 ```ts
 // app/llms.txt/route.ts
 import { createGeoffyTextRoute } from "@geoffy/headless/next";
-export const GET = createGeoffyTextRoute({ siteKey: process.env.GEOFFY_SITE_KEY! }, "llms.txt");
+import { geoffySiteKey } from "@/lib/geoffy";
+export const GET = createGeoffyTextRoute({ siteKey: geoffySiteKey() }, "llms.txt");
 ```
 
 ```ts
 // app/llms-full.txt/route.ts
 import { createGeoffyTextRoute } from "@geoffy/headless/next";
-export const GET = createGeoffyTextRoute({ siteKey: process.env.GEOFFY_SITE_KEY! }, "llms-full.txt");
+import { geoffySiteKey } from "@/lib/geoffy";
+export const GET = createGeoffyTextRoute({ siteKey: geoffySiteKey() }, "llms-full.txt");
 ```
 
 ```ts
 // app/agents.md/route.ts
 import { createGeoffyTextRoute } from "@geoffy/headless/next";
-export const GET = createGeoffyTextRoute({ siteKey: process.env.GEOFFY_SITE_KEY! }, "agents.md");
+import { geoffySiteKey } from "@/lib/geoffy";
+export const GET = createGeoffyTextRoute({ siteKey: geoffySiteKey() }, "agents.md");
 ```
 
 > **Why route handlers and not a rewrite in `next.config.js`.** A rewrite works, but it must
@@ -374,8 +394,9 @@ single catch-all route puts the whole of it on your domain:
 ```ts
 // app/apps/geoffy/[...path]/route.ts
 import { createGeoffyProxyRoute } from "@geoffy/headless/next";
+import { geoffySiteKey } from "@/lib/geoffy";
 
-export const GET = createGeoffyProxyRoute({ siteKey: process.env.GEOFFY_SITE_KEY! });
+export const GET = createGeoffyProxyRoute({ siteKey: geoffySiteKey() });
 ```
 
 The freshness window is `revalidateSeconds` on the options object — `createGeoffyProxyRoute({ siteKey, revalidateSeconds: 3600 })`. It is **not** a route-segment `export const revalidate`: this handler reads the request URL, which makes the route dynamic, so that export has no cached response to govern.
@@ -426,6 +447,7 @@ Serve `robots.txt` from a **route handler**, so your file is text you control:
 ```ts
 // app/robots.txt/route.ts
 import { fetchGeoffyText } from "@geoffy/headless";
+import { geoffySiteKey } from "@/lib/geoffy";
 
 const YOUR_RULES = `User-Agent: *
 Disallow: /admin
@@ -437,7 +459,7 @@ Sitemap: https://yourdomain.com/sitemap.xml
 
 export async function GET() {
   const geoffyRules = await fetchGeoffyText(
-    { siteKey: process.env.GEOFFY_SITE_KEY! },
+    { siteKey: geoffySiteKey() },
     "robots-rules.txt",
   );
 
@@ -539,13 +561,28 @@ GEOFFY_SITE_KEY=hs_live_...            # from Geoffy settings; public, safe in a
 GEOFFY_ORIGIN=https://api.geoffy.ai    # optional; this is the default, leave it unset
 ```
 
-`GEOFFY_SITE_KEY` is read by your own code as `import.meta.env.GEOFFY_SITE_KEY` and passed
-in below. `GEOFFY_ORIGIN` is different: Geoffy reads it itself, from `process.env`. That is
-available server-side under the Node adapter, which is where these helpers run. If your
+`GEOFFY_SITE_KEY` is read by your own code, through the helper below, and passed in.
+`GEOFFY_ORIGIN` is different: Geoffy reads it itself, from `process.env`. That is available server-side under the Node adapter, which is where these helpers run. If your
 adapter has no `process` — an edge runtime — the variable is ignored, with no error, and
 you point at another instance by passing `origin` alongside `siteKey` instead. As in
 Next.js, a value that is not an absolute `http`/`https` URL is ignored and the default is
 used. The usual reason to set it is "Testing locally before you publish live", below.
+
+Read the key through one small helper, so a missing key stops you in development instead of
+quietly rendering pages without Geoffy content. Every snippet below uses it:
+
+```ts
+// src/lib/geoffy.ts
+export function geoffySiteKey(): string {
+  const key = import.meta.env.GEOFFY_SITE_KEY ?? "";
+  // Loud in development, where you can fix it. In production a missing key never fails a
+  // page: Geoffy content is skipped, and the server log says so once.
+  if (!key && import.meta.env.DEV) {
+    throw new Error("GEOFFY_SITE_KEY is not set. Add it to .env and restart the dev server.");
+  }
+  return key;
+}
+```
 
 ### 2. The product page
 
@@ -553,10 +590,11 @@ used. The usual reason to set it is "Testing locally before you publish live", b
 ---
 // src/pages/[lang]/products/[handle].astro
 import { getGeoffyProductMarkup } from "@geoffy/headless/astro";
+import { geoffySiteKey } from "../../../lib/geoffy";
 
 const { lang, handle } = Astro.params;
 const geoffy = await getGeoffyProductMarkup(
-  { siteKey: import.meta.env.GEOFFY_SITE_KEY },
+  { siteKey: geoffySiteKey() },
   handle,
   { canonicalUrl: `https://yourdomain.com/${lang}/products/${handle}` },
 );
@@ -592,8 +630,9 @@ changing the call shape above.
 ```ts
 // src/pages/llms.txt.ts
 import { createGeoffyTextEndpoint } from "@geoffy/headless/astro";
+import { geoffySiteKey } from "../lib/geoffy";
 export const GET = createGeoffyTextEndpoint(
-  { siteKey: import.meta.env.GEOFFY_SITE_KEY },
+  { siteKey: geoffySiteKey() },
   "llms.txt",
 );
 ```
@@ -639,9 +678,10 @@ rather than from you, and the citations they earn go to us.
 ```ts
 // src/pages/apps/geoffy/[...path].ts
 import { createGeoffyProxyEndpoint } from "@geoffy/headless/astro";
+import { geoffySiteKey } from "../../../lib/geoffy";
 
 export const prerender = false;   // required — see below
-export const GET = createGeoffyProxyEndpoint({ siteKey: import.meta.env.GEOFFY_SITE_KEY });
+export const GET = createGeoffyProxyEndpoint({ siteKey: geoffySiteKey() });
 ```
 
 **`export const prerender = false` is not optional, and leaving it out breaks your build.**
@@ -669,6 +709,7 @@ file, and this one is a fragment you append to yours.
 // src/pages/robots.txt.ts
 import type { APIRoute } from "astro";
 import { fetchGeoffyText } from "@geoffy/headless";
+import { geoffySiteKey } from "../lib/geoffy";
 
 const YOUR_RULES = `User-Agent: *
 Disallow: /admin
@@ -680,7 +721,7 @@ Sitemap: https://yourdomain.com/sitemap.xml
 
 export const GET: APIRoute = async () => {
   const geoffyRules = await fetchGeoffyText(
-    { siteKey: import.meta.env.GEOFFY_SITE_KEY },
+    { siteKey: geoffySiteKey() },
     "robots-rules.txt",
   );
 
