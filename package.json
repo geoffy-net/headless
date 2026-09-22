@@ -1,6 +1,6 @@
 {
   "name": "@geoffy/headless",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Server-side Geoffy discovery surfaces for a custom-built storefront (Next.js, Astro).",
   "keywords": [
     "geoffy",
@@ -33,6 +33,14 @@
     "./astro": {
       "types": "./dist/astro.d.ts",
       "import": "./dist/astro.js"
+    },
+    "./next-middleware": {
+      "types": "./dist/next-middleware.d.ts",
+      "import": "./dist/next-middleware.js"
+    },
+    "./astro-middleware": {
+      "types": "./dist/astro-middleware.d.ts",
+      "import": "./dist/astro-middleware.js"
     }
   },
   "main": "./dist/client.js",

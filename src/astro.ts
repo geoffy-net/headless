@@ -119,9 +119,18 @@ export async function getGeoffyProductMarkup(
 export function createGeoffyTextEndpoint(
   opts: GeoffyClientOptions,
   file: "llms.txt" | "llms-full.txt" | "agents.md",
+  endpoint: {
+    /**
+     * Tell Geoffy which AI agent asked for the file (by its agent name). Only for an endpoint
+     * rendered on request (`export const prerender = false`): a prerendered one has no request
+     * headers to read, and Astro warns at build if it tries.
+     */
+    forwardCrawler?: boolean;
+  } = {},
 ) {
-  return async function GET(): Promise<Response> {
-    const body = await fetchGeoffyText(opts, file);
+  return async function GET(context?: { request?: Request }): Promise<Response> {
+    const request = endpoint.forwardCrawler ? context?.request : undefined;
+    const body = await fetchGeoffyText(opts, file, request);
     if (body === null) {
       return new Response("Not found\n", {
         status: 404,

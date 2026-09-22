@@ -23,6 +23,8 @@
  * server components and route handlers rather than hooks.
  */
 
+import { crawlerUserAgentHeaders } from "./aiAgents";
+
 /**
  * Where the artifacts live — the production origin, and the answer whenever nothing else
  * says otherwise.
@@ -351,16 +353,30 @@ export function decideFromManifest(
   return { render: true };
 }
 
-/** Fetch one of the site-wide text artifacts. `null` on any failure. */
+/**
+ * The header that tells Geoffy which AI crawler a server-side fetch is made for — empty unless
+ * the incoming request came from one. See `crawlerUserAgentHeaders` for why only a crawler's.
+ */
+function visitorHeaders(opts: GeoffyClientOptions, request: Request | undefined): Record<string, string> {
+  return crawlerUserAgentHeaders(request, `${resolveGeoffyOrigin(opts)}|${opts.siteKey}`);
+}
+
+/**
+ * Fetch one of the site-wide text artifacts. `null` on any failure.
+ *
+ * Pass the incoming `request` when there is one: if an AI crawler asked, Geoffy is told which.
+ */
 export async function fetchGeoffyText(
   opts: GeoffyClientOptions,
   file: "llms.txt" | "llms-full.txt" | "agents.md" | "robots-rules.txt",
+  request?: Request,
 ): Promise<string | null> {
   if (!canRequest(opts.siteKey, file)) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 4000);
   try {
     const res = await fetch(artifactUrl(opts, `/${file}`), {
+      headers: visitorHeaders(opts, request),
       signal: controller.signal,
       redirect: "error",
       next: { revalidate: opts.revalidateSeconds ?? 3600, tags: ["geoffy:root-files"] },
@@ -627,6 +643,7 @@ interface GeoffyArtifact {
 async function fetchGeoffyArtifact(
   opts: GeoffyClientOptions,
   path: string,
+  request: Request,
 ): Promise<GeoffyArtifact | null> {
   const controller = new AbortController();
   // Deliberately shorter than the build-time default. This one runs on a merchant's PUBLIC
@@ -635,6 +652,7 @@ async function fetchGeoffyArtifact(
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 1500);
   try {
     const res = await fetch(artifactUrl(opts, path), {
+      headers: visitorHeaders(opts, request),
       signal: controller.signal,
       // `manual`, not `error`. `error` made fetch reject on any 3xx, which the catch turned
       // into "Geoffy is temporarily unavailable" — permanently, for a page that had simply
@@ -766,7 +784,7 @@ export async function handleGeoffyProxy(
     // The query string is deliberately NOT forwarded. No artifact route reads one, and
     // passing it through would let anyone bypass every cache in front of Geoffy — ours and
     // yours — by appending a unique parameter, turning a cheap crawl into unbounded load.
-    const artifact = await fetchGeoffyArtifact(opts, path);
+    const artifact = await fetchGeoffyArtifact(opts, path, request);
 
     if (artifact === null) return unavailable();
 
