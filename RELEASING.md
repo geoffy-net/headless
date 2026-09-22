@@ -28,7 +28,10 @@ node --input-type=module -e '
   import { DEFAULT_GEOFFY_ORIGIN } from "@geoffy/headless";
   import { getGeoffyProductMarkup } from "@geoffy/headless/astro";
   import { GeoffyProduct } from "@geoffy/headless/next";
-  console.log(DEFAULT_GEOFFY_ORIGIN, typeof getGeoffyProductMarkup, typeof GeoffyProduct);
+  import { createGeoffyAiVisitMiddleware as nextMw } from "@geoffy/headless/next-middleware";
+  import { createGeoffyAiVisitMiddleware as astroMw } from "@geoffy/headless/astro-middleware";
+  console.log(DEFAULT_GEOFFY_ORIGIN, typeof getGeoffyProductMarkup, typeof GeoffyProduct,
+    typeof nextMw, typeof astroMw);
 '
 ```
 
@@ -106,8 +109,10 @@ Node 22 (>= 22.14 for the same feature).
 it, and a mismatch fails the publish.
 
 The published artifact contains no sourcemaps and nothing outside `files`. Check with
-`npm pack --dry-run`; the expected list is `LICENSE`, `README.md`, `package.json` and seven
-files under `dist/`. After a release, run the tarball probe above against the *published*
+`npm pack --dry-run`; the expected list is `LICENSE`, `README.md`, `package.json` and, under
+`dist/`, a `.js` and a `.d.ts` for each of the five entries plus the shared `chunk-*.js` (and
+one shared `.d.ts`) the build splits out. The chunk count is the build's choice, so check that
+every entry is present rather than counting files. After a release, run the tarball probe above against the *published*
 package rather than a local `.tgz`.
 
 `npm view` reads through a CDN cache and can report the previous version for several minutes

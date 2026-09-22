@@ -32,6 +32,7 @@ point, and an Astro site never pulls React into its graph.
 | A sitemap of the Geoffy content on your site | On your own domain, under `/apps/geoffy/` |
 | Crawler rules for AI agents, and a `Sitemap:` pointing at the above | Lines you merge into your own `robots.txt` |
 | Search-engine index pings | Sent by Geoffy when you publish |
+| Which AI systems read your pages (optional) | In Geoffy, once you add the [AI visit middleware](#ai-visit-tracking-optional) |
 
 Everything is server-rendered. That is not a preference — AI crawlers largely do not run
 JavaScript, so anything added to the page after hydration is invisible to the systems this
@@ -840,6 +841,161 @@ your product pages and nothing else.
 Rare, and you will be told. The readiness check compares the *contents* of your file against
 the current key, so a stale file is reported as missing rather than passing on the strength of
 its name. Replace it with the new value and redeploy.
+
+---
+
+## AI visit tracking (optional)
+
+Geoffy can show you which AI systems read your pages — your real product pages, not only the
+files Geoffy serves — and which shoppers arrive from an AI assistant. It takes one small
+middleware, and it is entirely optional: nothing else in this guide depends on it.
+
+### What it reports, and what it never does
+
+It reports a request when **either** of these is true:
+
+- the user agent names a known AI agent (GPTBot, OAI-SearchBot, ChatGPT-User, ClaudeBot,
+  PerplexityBot, Google-Extended, Amazonbot, CCBot, bingbot and others), or
+- the visitor arrived from an AI assistant: the `referer` is, or `utm_source` names,
+  chatgpt.com, chat.openai.com, perplexity.ai, gemini.google.com, copilot.microsoft.com,
+  claude.ai or grok.com.
+
+Every other request — every ordinary page view — **makes no network call at all**. The
+decision is made on your server, so your shoppers' visits never leave it.
+
+For each reported request it sends the time, the page's URL **without** its query string, and
+the assistant's host or `utm_source`. For a request that claims to be an AI crawler it also
+sends the user agent and, only where your platform vouches for one, the visitor address (see
+[The visitor's address](#the-visitors-address)) — that is what lets Geoffy check the claim
+against the vendor's published address ranges. For a shopper arriving from an assistant it
+sends neither: no user agent, no address. It reads no cookies and sets none, so it needs no
+consent banner.
+
+It never changes your response, never delays it, and never throws: the report is sent after
+your response, and if Geoffy is slow or unreachable the report is simply lost. Because anyone
+can send a crawler's user agent, each server process sends at most 60 reports a minute; any
+over that are counted and the count is reported with the next one.
+
+The list of AI agents ships with the package and is topped up from Geoffy once a day, so a new
+crawler is recognised without an upgrade. If that update cannot be read, the built-in list
+applies.
+
+### Next.js
+
+Uses the two variables you already have: `GEOFFY_SITE_KEY` and `GEOFFY_REVALIDATE_SECRET`.
+Reports are signed with that secret; without it nothing is sent.
+
+```ts
+// proxy.ts (Next 16) — or middleware.ts on earlier versions, with `export const middleware`
+import { createGeoffyAiVisitMiddleware } from "@geoffy/headless/next-middleware";
+
+export const proxy = createGeoffyAiVisitMiddleware({ siteKey: process.env.GEOFFY_SITE_KEY! });
+```
+
+It returns nothing, which Next reads as "carry on", so your pages are served exactly as before.
+If you already have a middleware, call it from inside yours and keep returning your own
+response:
+
+```ts
+import type { NextFetchEvent, NextRequest } from "next/server";
+import { createGeoffyAiVisitMiddleware } from "@geoffy/headless/next-middleware";
+
+const trackAiVisits = createGeoffyAiVisitMiddleware({ siteKey: process.env.GEOFFY_SITE_KEY! });
+
+export function proxy(request: NextRequest, event: NextFetchEvent) {
+  trackAiVisits(request, event);
+  return yourExistingLogic(request);
+}
+```
+
+The report is handed to `event.waitUntil`, so it finishes after the response. To use Next's
+`after` instead, pass it: `createGeoffyAiVisitMiddleware({ siteKey, defer: after })`.
+
+Keep your `matcher` (if you have one) covering your pages. The middleware already ignores
+`/_next/` and static files such as scripts, styles, images and fonts.
+
+### Astro
+
+```ts
+// src/middleware.ts
+import { createGeoffyAiVisitMiddleware } from "@geoffy/headless/astro-middleware";
+
+export const onRequest = createGeoffyAiVisitMiddleware({
+  siteKey: import.meta.env.GEOFFY_SITE_KEY,
+  secret: import.meta.env.GEOFFY_REVALIDATE_SECRET,
+});
+```
+
+Already have an `onRequest`? Combine them with `sequence()` from `astro:middleware`.
+
+Astro runs middleware only for pages it renders on request. A page prerendered at build time is
+served as a file and never reaches the middleware, so reads of prerendered pages are not
+reported. Mark the pages you want counted with `export const prerender = false`, or accept the
+gap.
+
+### The visitor's address
+
+| Where your site runs | Default |
+|---|---|
+| Vercel, with visitors reaching Vercel directly | the address Vercel sets for the request — nothing to configure |
+| Vercel behind another CDN or proxy | Vercel sees the CDN's address, so crawler visits cannot be confirmed. Pass `clientIp` with the address your CDN vouches for |
+| Anywhere else | none: visits are reported without an address |
+
+The default never reads `X-Forwarded-For`. Its first entry is whatever the client chose to
+send, so trusting it would let anyone claim to be a crawler from a vendor's address range.
+
+If your platform gives you an address you can trust, pass it:
+
+```ts
+createGeoffyAiVisitMiddleware({
+  siteKey: process.env.GEOFFY_SITE_KEY!,
+  // e.g. an address your own load balancer wrote, which clients cannot set
+  clientIp: (request) => request.headers.get("x-your-trusted-client-ip"),
+});
+```
+
+On Astro the function also receives the middleware context, so
+`clientIp: (request, context) => context.clientAddress` is available — but check where your
+adapter gets that value first: an adapter that reads `X-Forwarded-For` hands you the
+client's own claim.
+
+### Options
+
+| Option | Default | |
+|---|---|---|
+| `siteKey` | — | Required. Without it nothing is sent |
+| `secret` | `GEOFFY_REVALIDATE_SECRET` | Signs each report. Without one nothing is sent |
+| `origin` | as everywhere else in this package | |
+| `clientIp` | see above | |
+| `exclude` | `/_next/` and static files | Extra paths never reported: a string is a path prefix, a RegExp is tested against the path. Added to the defaults, never instead of them |
+| `sample` | `1` | Report this fraction of matching requests, `0`–`1` |
+| `timeoutMs` | `3000` | Give up on a report after this long. It never delays your response |
+
+### Without the middleware
+
+The namespace route already tells Geoffy which AI agent asked for a file, by the agent's name
+(`GPTBot`) — a browser's user agent is never passed on. So even without the middleware, Geoffy
+sees the agents that read your product text versions and your guides, as often as your cache
+fetches them from Geoffy.
+
+The site-wide text routes can do the same, but only when you ask, because it means reading the
+request headers — which makes Next render the route on every request instead of serving it
+from its static or cached output:
+
+```ts
+// app/llms.txt/route.ts
+export const GET = createGeoffyTextRoute(
+  { siteKey: process.env.GEOFFY_SITE_KEY! },
+  "llms.txt",
+  { forwardCrawler: true },
+);
+```
+
+On Astro, pass the same third argument to `createGeoffyTextEndpoint`, and only on an endpoint
+rendered on request (`export const prerender = false`).
+
+What only the middleware can show is who reads your own product pages, and who arrives from an
+assistant.
 
 ---
 

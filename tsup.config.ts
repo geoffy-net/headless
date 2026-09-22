@@ -1,10 +1,17 @@
 import { defineConfig } from "tsup";
 
-// Three entries because the package has three consumers with different needs: the
-// framework-agnostic client, the Next server components, and the Astro helpers. Keeping
-// them separate means an Astro site never pulls React into its graph.
+// One entry per consumer with different needs: the framework-agnostic client, the Next server
+// components, the Astro helpers, and the two optional AI-visit middlewares. Keeping them
+// separate means an Astro site never pulls React into its graph, and a site that does not add
+// the middleware never loads it. Shared code lands in `chunk-*.js` files beside the entries.
 export default defineConfig({
-  entry: ["src/client.ts", "src/next.tsx", "src/astro.ts"],
+  entry: [
+    "src/client.ts",
+    "src/next.tsx",
+    "src/astro.ts",
+    "src/next-middleware.ts",
+    "src/astro-middleware.ts",
+  ],
   format: ["esm"],
   dts: true,
   // No sourcemaps in the published tarball: they embed `sourcesContent`, i.e. the entire

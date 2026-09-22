@@ -20,6 +20,7 @@ import {
   skippedMarker,
 } from "./client";
 import { canRequest } from "./guard";
+import { signatureMatches } from "./signature";
 
 export interface GeoffyProductProps extends GeoffyClientOptions {
   /** The product handle — the same value your product route already has. */
@@ -160,6 +161,15 @@ export async function GeoffyProduct({
   );
 }
 
+export interface GeoffyTextRouteOptions {
+  /**
+   * Tell Geoffy which AI agent asked for the file (by its agent name, never a raw user agent).
+   * Off by default because it reads the request headers, which makes Next render the route on
+   * every request instead of serving it from its static or cached output.
+   */
+  forwardCrawler?: boolean;
+}
+
 /**
  * Route handler factory for the site-wide text files.
  *
@@ -178,9 +188,13 @@ export async function GeoffyProduct({
 export function createGeoffyTextRoute(
   opts: GeoffyClientOptions,
   file: "llms.txt" | "llms-full.txt" | "agents.md",
+  route: GeoffyTextRouteOptions = {},
 ) {
-  return async function GET(): Promise<Response> {
-    const body = await fetchGeoffyText(opts, file);
+  return async function GET(request?: Request): Promise<Response> {
+    // The request is read only when asked to: reading its headers makes Next render the route
+    // on every request, and a merchant's static or cached route must not change mode because
+    // they upgraded this package.
+    const body = await fetchGeoffyText(opts, file, route.forwardCrawler ? request : undefined);
 
     // 404 rather than an empty 200. An empty file served successfully tells an agent that
     // this site has nothing to say; a 404 tells it to come back.
@@ -298,40 +312,6 @@ export function createGeoffyRevalidateRoute(config: {
       headers: { "content-type": "application/json" },
     });
   };
-}
-
-/**
- * Compare the signature in constant time, via WebCrypto so this stays runtime-agnostic —
- * the same file has to work on Node and on an edge runtime, and `node:crypto` is not
- * available on the latter.
- *
- * Both sides are digested before comparison, so the compare is over two fixed-length values
- * and leaks neither the secret's length nor an early-exit position.
- */
-async function signatureMatches(secret: string, body: string, provided: string): Promise<boolean> {
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const mac = await crypto.subtle.sign("HMAC", key, encoder.encode(body));
-  const expected = `sha256=${[...new Uint8Array(mac)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("")}`;
-
-  // Digest both sides so the loop below always runs over equal-length inputs.
-  const [a, b] = await Promise.all([
-    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
-    crypto.subtle.digest("SHA-256", encoder.encode(provided)),
-  ]);
-  const av = new Uint8Array(a);
-  const bv = new Uint8Array(b);
-  let diff = 0;
-  for (let i = 0; i < av.length; i += 1) diff |= (av[i] ?? 0) ^ (bv[i] ?? 0);
-  return diff === 0;
 }
 
 /**
