@@ -35,7 +35,9 @@
  *
  * See `resolveGeoffyOrigin` for what happens to a value that is not usable.
  */
-export const DEFAULT_GEOFFY_ORIGIN = "https://api.geoffy.ai";
+import { canRequest } from "./guard";
+
+export const DEFAULT_GEOFFY_ORIGIN ="https://api.geoffy.ai";
 
 /**
  * Read `GEOFFY_ORIGIN`, or `undefined` if it is absent or unusable.
@@ -160,6 +162,7 @@ export async function fetchGeoffyProduct(
   opts: GeoffyClientOptions,
   handle: string,
 ): Promise<GeoffyProductArtifact | null> {
+  if (!canRequest(opts.siteKey, handle)) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 4000);
 
@@ -240,6 +243,7 @@ export async function fetchGeoffyManifest(
   opts: GeoffyClientOptions,
   memoMs = 0,
 ): Promise<GeoffyManifest | null> {
+  if (!canRequest(opts.siteKey)) return null;
   const key = `${resolveGeoffyOrigin(opts)}|${opts.siteKey}`;
   const hit = manifestMemo.get(key);
   if (memoMs > 0 && hit && Date.now() - hit.at < memoMs) return hit.manifest;
@@ -352,6 +356,7 @@ export async function fetchGeoffyText(
   opts: GeoffyClientOptions,
   file: "llms.txt" | "llms-full.txt" | "agents.md" | "robots-rules.txt",
 ): Promise<string | null> {
+  if (!canRequest(opts.siteKey, file)) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 4000);
   try {
@@ -750,12 +755,10 @@ export async function handleGeoffyProxy(
   request: Request,
 ): Promise<Response> {
   try {
-    // An unset env var is the likeliest misconfiguration, and the Astro snippet reads
-    // `import.meta.env.GEOFFY_SITE_KEY` with no guard, so it arrives as `undefined` and
-    // builds `/headless/undefined/...` — 404ing the merchant's whole namespace with nothing
-    // anywhere saying why. 503, not 404: whether the artifact exists is unknown, and the
-    // fault is ours to surface rather than theirs to infer.
-    if (typeof opts.siteKey !== "string" || opts.siteKey.trim() === "") return unavailable();
+    // A missing site key is refused before any request (see `canRequest`). 503, not 404:
+    // whether the artifact exists is unknown, and the fault is ours to surface rather than
+    // theirs to infer.
+    if (!canRequest(opts.siteKey)) return unavailable();
 
     const path = resolveProxyPath(request.url);
     if (path === null) return notFound();

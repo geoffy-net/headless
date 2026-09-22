@@ -27,6 +27,7 @@ import {
   handleGeoffyProxy,
   serializeJsonLd,
 } from "./client";
+import { canRequest } from "./guard";
 
 /** How long the Astro helper reuses a manifest it read, in this process. */
 const ASTRO_MANIFEST_MEMO_MS = 30_000;
@@ -75,6 +76,9 @@ export async function getGeoffyProductMarkup(
   handle: string,
   page: { canonicalUrl?: string; locale?: string } = {},
 ): Promise<GeoffyProductMarkup | null> {
+  // Before the manifest read, so a missing handle costs no request at all.
+  if (!canRequest(opts.siteKey, handle)) return null;
+
   // The manifest first — see the Next component. Memoised in-process for ASTRO_MANIFEST_MEMO_MS
   // because Astro has no data cache to hold it; a publish is picked up within that window.
   const manifest = await fetchGeoffyManifest(opts, ASTRO_MANIFEST_MEMO_MS);

@@ -19,6 +19,7 @@ import {
   serializeJsonLd,
   skippedMarker,
 } from "./client";
+import { canRequest } from "./guard";
 
 export interface GeoffyProductProps extends GeoffyClientOptions {
   /** The product handle — the same value your product route already has. */
@@ -67,6 +68,8 @@ export async function GeoffyProduct({
   locale,
   ...opts
 }: GeoffyProductProps) {
+  // Before the manifest read, so a missing handle costs no request at all.
+  if (!canRequest(opts.siteKey, handle)) return null;
   // The manifest first. A manifest we read can say "not here" without a product request; a
   // manifest we could not read says nothing, and the per-product request below runs as before.
   const manifest = await fetchGeoffyManifest(opts);
