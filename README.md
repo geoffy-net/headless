@@ -872,9 +872,17 @@ sends neither: no user agent, no address. It reads no cookies and sets none, so 
 consent banner.
 
 It never changes your response, never delays it, and never throws: the report is sent after
-your response, and if Geoffy is slow or unreachable the report is simply lost. Because anyone
-can send a crawler's user agent, each server process sends at most 60 reports a minute; any
-over that are counted and the count is reported with the next one.
+your response, and if Geoffy is slow or unreachable the report is simply lost.
+
+Because anyone can send a crawler's user agent, each server process makes at most **60 calls a
+minute** to Geoffy. That bound is on calls, not on visits: an AI crawler sweeping your
+catalogue can read hundreds of pages in a minute, so a visit that arrives once the budget is
+spent **waits for the next call** rather than being thrown away, and that call carries up to 50
+visits in one report. Your server makes the same small number of calls either way.
+
+If a burst is large enough that visits are still waiting minutes later, the oldest are given
+up on — and the count of them is sent with the next report, so the figures Geoffy shows you say
+they are a minimum rather than presenting a number it knows is short as a total.
 
 The list of AI agents ships with the package and is topped up from Geoffy once a day, so a new
 crawler is recognised without an upgrade. If that update cannot be read, the built-in list
