@@ -15,6 +15,8 @@ import { __resetGeoffyAiVisits, createGeoffyAiVisitMiddleware } from "../dist/ne
 import { createGeoffyAiVisitMiddleware as createAstroMiddleware } from "../dist/astro-middleware.js";
 
 const SECRET = "shh-test-secret";
+/** Mirrors `MAX_QUEUED_EVENTS` in src/aiVisits.ts — the cap the overflow arithmetic turns on. */
+const MAX_QUEUED = 500;
 const GPTBOT =
   "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; GPTBot/1.2; +https://openai.com/gptbot";
 const BROWSER =
@@ -307,14 +309,39 @@ describe("next middleware: what is never sent", () => {
     } finally {
       Date.now = realNow;
     }
-    const withDrops = posts(calls)
-      .map((c) => JSON.parse(c.init.body))
-      .filter((b) => typeof b.dropped === "number");
-    assert.ok(withDrops.length > 0, "gave up on visits and reported none");
-    assert.ok(
-      withDrops.reduce((a, b) => a + b.dropped, 0) > 0,
-      "reported a drop count of zero",
-    );
+    // The exact arithmetic, not merely "> 0": 1200 enqueued, ~60 drained by the first burst's
+    // calls, a 500-visit cap on what is held — so ~640 are pushed off the front and counted.
+    // A loose assertion here passes an off-by-N or a double count in the overflow accounting,
+    // which is the one place the number the merchant is shown is computed.
+    const bodies = posts(calls).map((c) => JSON.parse(c.init.body));
+    const sentInBurst = bodies.length - 1;
+    const reported = bodies.reduce((a, b) => a + (b.dropped ?? 0), 0);
+    const stillQueued = MAX_QUEUED - bodies.at(-1).events.length;
+    assert.equal(reported, 1201 - sentInBurst - bodies.at(-1).events.length - stillQueued);
+    assert.ok(reported > 600, `expected the cap to bite, got ${reported}`);
+  });
+
+  it("counts a batch a failed call lost, so the next report still says how much is missing", async () => {
+    // The state the count matters most in. A refused or timed-out call takes up to 50 visits
+    // with it; without crediting them back, the merchant loses the reads AND the evidence that
+    // reads were lost, and the figures go back to reading as totals.
+    const calls = stubFetch({ visitStatus: 500 });
+    const { event, settle } = deferredEvent();
+    const mw = createGeoffyAiVisitMiddleware({ siteKey: "sk", secret: SECRET });
+    for (let i = 0; i < 5; i += 1) mw(page(`/p/${i}`, { "user-agent": GPTBOT }), event);
+    await settle();
+    assert.equal(posts(calls).length, 5);
+
+    // Now let one through. It must carry the five that were lost.
+    globalThis.fetch = async (url, init = {}) => {
+      calls.push({ url: String(url), init });
+      if (String(url).endsWith("/agents.json")) return new Response("nope", { status: 500 });
+      return new Response(null, { status: 202 });
+    };
+    mw(page("/after", { "user-agent": GPTBOT }), event);
+    await settle();
+    const last = JSON.parse(posts(calls).at(-1).init.body);
+    assert.equal(last.dropped, 5);
   });
 
   it("drops a visit that has gone stale rather than sending it with fresh ones", async () => {

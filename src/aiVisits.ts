@@ -207,6 +207,28 @@ function drain(key: string, now: number): { events: VisitEvent[]; dropped: numbe
   return { events, dropped };
 }
 
+/**
+ * Count visits back onto the queue's drop total after a report failed to arrive.
+ *
+ * Bounded by the same cap as the queue itself, so a site that cannot reach Geoffy at all
+ * accumulates a large-but-finite number rather than growing one for ever.
+ */
+function creditDropped(key: string, count: number): void {
+  if (count <= 0) return;
+  const q = queues.get(key) ?? { events: [], dropped: 0 };
+  queues.set(key, q);
+  q.dropped = Math.min(q.dropped + count, MAX_DROPPED_CARRIED);
+}
+
+/**
+ * The largest drop count carried between reports.
+ *
+ * Generous, because under-reporting here is the failure this whole mechanism exists to stop,
+ * and finite, because the alternative is a number that grows without bound on a site that has
+ * been unable to reach Geoffy for weeks. Comfortably inside what the receiver accepts.
+ */
+const MAX_DROPPED_CARRIED = 1_000_000;
+
 /** Test seam: forget every budget and every queued visit. */
 export function resetAiVisitBudgets(): void {
   budgets.clear();
@@ -283,7 +305,17 @@ export function trackAiVisit(opts: GeoffyAiVisitOptions, request: Request, defer
     let started: Promise<void> | null = null;
     const work = (): Promise<void> => {
       started ??= Promise.allSettled([
-        sendVisits(`${base}/visits`, secret, payload, timeoutMs),
+        sendVisits(`${base}/visits`, secret, payload, timeoutMs).then((sent) => {
+          // A failed call loses the whole batch — up to 50 visits, plus whatever drop count
+          // rode with it. Both are counted back onto the queue so the NEXT report still says
+          // how much is missing; without this a merchant whose calls are timing out or being
+          // refused loses the reads AND the evidence that reads were lost, which is the state
+          // the count matters most in.
+          //
+          // Only the COUNT comes back, never the events: they would age past the freshness
+          // bound and then cost the whole next report, since a report is refused as a unit.
+          if (!sent) creditDropped(kind, payload.events.length + (payload.dropped ?? 0));
+        }),
         // Refreshed only from here — the report of a MATCHED request — so an ordinary page view
         // still makes no call at all. A newly listed agent is recognised from the next request on.
         refreshAiAgents(listKey, `${base}/agents.json`, timeoutMs),
@@ -306,12 +338,19 @@ export function trackAiVisit(opts: GeoffyAiVisitOptions, request: Request, defer
   }
 }
 
+/**
+ * Send one report. Resolves `true` when it was accepted, `false` when it was lost.
+ *
+ * It still never throws: a lost report is a missing data point, never an error on the
+ * merchant's site. What the caller does with `false` is count it, so the next report can say
+ * how much is missing rather than going quiet about it.
+ */
 async function sendVisits(
   url: string,
   secret: string,
   payload: VisitPayload,
   timeoutMs: number,
-): Promise<void> {
+): Promise<boolean> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -328,8 +367,11 @@ async function sendVisits(
     });
     // Nothing to read; release the connection.
     await res.body?.cancel().catch(() => undefined);
+    // A refusal counts as lost as surely as a timeout does — a rate-limited or rejected
+    // report took the batch with it.
+    return res.ok;
   } catch {
-    // A lost report is a missing data point, never an error on the merchant's site.
+    return false;
   } finally {
     clearTimeout(timer);
   }
