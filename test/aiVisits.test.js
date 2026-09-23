@@ -219,9 +219,10 @@ describe("next middleware: what is never sent", () => {
     assert.equal(posts(calls).length, 1);
   });
 
-  it("bounds the report rate per process, and says how many it dropped", async () => {
+  it("bounds the CALL rate per process, and batches the visits it could not send yet", async () => {
     // Anyone can send a crawler's user agent, so without a bound the merchant's server would
-    // send one report per spoofed request.
+    // make one call per spoofed request. The bound is on calls; a visit that arrives with the
+    // budget spent waits for the next one instead of being thrown away.
     const calls = stubFetch();
     const { event, settle } = deferredEvent();
     const mw = createGeoffyAiVisitMiddleware({ siteKey: "sk", secret: SECRET });
@@ -230,7 +231,14 @@ describe("next middleware: what is never sent", () => {
     const sent = posts(calls);
     assert.ok(sent.length >= 60 && sent.length < 70, `sent ${sent.length}`);
 
-    // Once the budget refills, the next report carries the count of what was dropped.
+    // Nothing was discarded: every one of the hundred is either already reported or queued.
+    // A `dropped` on any of these would mean the queue gave up on a visit it did not need to.
+    for (const call of sent) {
+      assert.equal(JSON.parse(call.init.body).dropped, undefined);
+    }
+
+    // Once the budget refills, the next call carries the whole queue in ONE report — oldest
+    // first — rather than one visit and a count of the rest.
     const realNow = Date.now;
     Date.now = () => realNow() + 60_000;
     try {
@@ -240,8 +248,102 @@ describe("next middleware: what is never sent", () => {
       Date.now = realNow;
     }
     const last = JSON.parse(posts(calls).at(-1).init.body);
-    assert.equal(last.events[0].path, "https://storefront.example/after");
-    assert.equal(last.dropped, 100 - sent.length);
+    assert.ok(last.events.length > 1, `batched ${last.events.length}`);
+    assert.equal(last.events[0].path, `https://storefront.example/p/${sent.length}`);
+    assert.equal(last.dropped, undefined);
+
+    // Every one of the hundred reached Geoffy, across far fewer calls than visits.
+    const reported = posts(calls).flatMap((c) => JSON.parse(c.init.body).events.length);
+    assert.equal(
+      reported.reduce((a, b) => a + b, 0),
+      101,
+    );
+  });
+
+  it("never puts more than 50 visits in one report", async () => {
+    // Geoffy refuses a longer list, and it refuses the whole report — so exceeding this would
+    // lose every visit in the batch rather than the excess.
+    //
+    // ⚠️ The clock moves ONE minute, not ten. Ten is past the freshness bound, so every queued
+    // visit is pruned and each report carries a single event — measured: the first version of
+    // this case jumped ten minutes and stayed green with the ceiling raised to 200, guarding
+    // nothing. A minute refills the budget while leaving the queue sendable, which is the only
+    // state in which the ceiling decides anything.
+    const calls = stubFetch();
+    const { event, settle } = deferredEvent();
+    const mw = createGeoffyAiVisitMiddleware({ siteKey: "sk", secret: SECRET });
+    for (let i = 0; i < 300; i += 1) mw(page(`/p/${i}`, { "user-agent": GPTBOT }), event);
+    await settle();
+    const realNow = Date.now;
+    Date.now = () => realNow() + 60_000;
+    try {
+      mw(page("/after", { "user-agent": GPTBOT }), event);
+      await settle();
+    } finally {
+      Date.now = realNow;
+    }
+    const lengths = posts(calls).map((c) => JSON.parse(c.init.body).events.length);
+    for (const length of lengths) assert.ok(length <= 50, `report carried ${length}`);
+    // …and one really did fill up, or the bound above is satisfied by doing no batching at all.
+    assert.equal(Math.max(...lengths), 50);
+  });
+
+  it("counts a visit it gives up on, rather than losing it quietly", async () => {
+    // Two ways a queued visit is given up on, and both must be COUNTED: the queue is full, or
+    // the visit got too old to send. A count Geoffy knows about is one it can label "at
+    // least"; one it does not is a number shown as a total.
+    const calls = stubFetch();
+    const { event, settle } = deferredEvent();
+    const mw = createGeoffyAiVisitMiddleware({ siteKey: "sk", secret: SECRET });
+    // Far past the 500-visit queue cap, so the oldest are discarded.
+    for (let i = 0; i < 1200; i += 1) mw(page(`/p/${i}`, { "user-agent": GPTBOT }), event);
+    await settle();
+
+    const realNow = Date.now;
+    Date.now = () => realNow() + 60_000;
+    try {
+      mw(page("/after", { "user-agent": GPTBOT }), event);
+      await settle();
+    } finally {
+      Date.now = realNow;
+    }
+    const withDrops = posts(calls)
+      .map((c) => JSON.parse(c.init.body))
+      .filter((b) => typeof b.dropped === "number");
+    assert.ok(withDrops.length > 0, "gave up on visits and reported none");
+    assert.ok(
+      withDrops.reduce((a, b) => a + b.dropped, 0) > 0,
+      "reported a drop count of zero",
+    );
+  });
+
+  it("drops a visit that has gone stale rather than sending it with fresh ones", async () => {
+    // Geoffy refuses a report whose timestamps are too far from its clock, and refuses the
+    // WHOLE report — so one straggler must not travel with a fresh batch.
+    const calls = stubFetch();
+    const { event, settle } = deferredEvent();
+    const mw = createGeoffyAiVisitMiddleware({ siteKey: "sk", secret: SECRET });
+    for (let i = 0; i < 100; i += 1) mw(page(`/p/${i}`, { "user-agent": GPTBOT }), event);
+    await settle();
+    const sentBefore = posts(calls).length;
+
+    // An hour later: everything still queued is long past the freshness bound.
+    const realNow = Date.now;
+    Date.now = () => realNow() + 3_600_000;
+    try {
+      mw(page("/fresh", { "user-agent": GPTBOT }), event);
+      await settle();
+    } finally {
+      Date.now = realNow;
+    }
+    const last = JSON.parse(posts(calls).at(-1).init.body);
+    assert.equal(posts(calls).length, sentBefore + 1);
+    // Only the fresh one goes; the stale ones are counted, not sent.
+    assert.deepEqual(
+      last.events.map((e) => e.path),
+      ["https://storefront.example/fresh"],
+    );
+    assert.equal(last.dropped, 100 - sentBefore);
   });
 
   it("a crawler flood does not use up the budget for assistant referrals", async () => {

@@ -86,45 +86,131 @@ interface VisitEvent {
 }
 
 interface VisitPayload {
+  /** One or more visits, oldest first. Several arrive together under load — see the budget. */
   events: VisitEvent[];
   /** Present when `sample` < 1: each event stands for 1/sampleRate matching requests. */
   sampleRate?: number;
-  /** Matching requests this process dropped over its budget since its last send. */
+  /**
+   * Matching requests this process discarded since its last send, and could not report.
+   *
+   * Reported rather than forgotten so the counts Geoffy shows can say they are a minimum. A
+   * visit that is merely waiting for the next send is NOT counted here — only one given up on.
+   */
   dropped?: number;
 }
 
-/** Reports per process per site: a burst of this many, refilled at this many a minute. */
+/**
+ * Reports (network calls) per process per site: a burst of this many, refilled at this many a
+ * minute.
+ *
+ * The bound is on CALLS, not on visits. Anyone can send a crawler's user agent, so an unbounded
+ * reporter on a busy storefront is not something this package may ship — but a crawler sweep is
+ * hundreds of pages in a minute, and one call per page spent this budget in seconds.
+ *
+ * So a visit that cannot be sent immediately is QUEUED rather than thrown away, and the next
+ * call carries the whole queue. The merchant's server still makes at most this many calls a
+ * minute; each one now reports up to {@link MAX_EVENTS_PER_REPORT} visits instead of one.
+ */
 const BUDGET_PER_MINUTE = 60;
+
+/**
+ * Visits per report. Geoffy refuses a longer list, so this is a ceiling rather than a
+ * preference — a report over it is rejected whole and every visit in it is lost.
+ */
+const MAX_EVENTS_PER_REPORT = 50;
+
+/**
+ * Visits held per site while waiting for the next call. Past this the OLDEST is discarded.
+ *
+ * Oldest rather than newest on purpose: the older a queued visit is, the closer it is to the
+ * freshness bound below, so discarding it loses the one most likely to be refused anyway.
+ * An unbounded queue would be a memory leak on the merchant's server, which is the one cost
+ * this package must never impose.
+ */
+const MAX_QUEUED_EVENTS = 500;
+
+/**
+ * How stale a queued visit may be when a report is built.
+ *
+ * Geoffy refuses a report whose timestamps are too far from its own clock, and it refuses the
+ * WHOLE report — so one straggler left over from an earlier burst would lose every fresh visit
+ * batched with it. Comfortably inside that bound, so a slow send cannot cross it in flight.
+ *
+ * A visit pruned here is counted as dropped, never silently forgotten: a count Geoffy knows is
+ * short is one it can label, and one it does not know about is one it presents as a total.
+ */
+const MAX_EVENT_AGE_MS = 5 * 60_000;
 
 interface Budget {
   tokens: number;
   refilledAt: number;
+}
+
+interface Queue {
+  events: VisitEvent[];
+  /** Visits discarded since the last successful send — over the queue cap, or too stale. */
   dropped: number;
 }
 
-/** Keyed on configuration (`origin|siteKey`), never on request data, so it cannot grow per request. */
+/** Keyed on configuration (`origin|siteKey|kind`), never on request data, so it cannot grow per request. */
 const budgets = new Map<string, Budget>();
+const queues = new Map<string, Queue>();
 
-/** Take one report from the budget: `null` when spent, else how many were dropped before it. */
-function takeBudget(listKey: string): { dropped: number } | null {
+/** Take one CALL from the budget. False when the budget is spent for now. */
+function takeBudget(key: string): boolean {
   const now = Date.now();
-  const b = budgets.get(listKey) ?? { tokens: BUDGET_PER_MINUTE, refilledAt: now, dropped: 0 };
-  budgets.set(listKey, b);
+  const b = budgets.get(key) ?? { tokens: BUDGET_PER_MINUTE, refilledAt: now };
+  budgets.set(key, b);
   b.tokens = Math.min(BUDGET_PER_MINUTE, b.tokens + ((now - b.refilledAt) / 60_000) * BUDGET_PER_MINUTE);
   b.refilledAt = now;
-  if (b.tokens < 1) {
-    b.dropped += 1;
-    return null;
-  }
+  if (b.tokens < 1) return false;
   b.tokens -= 1;
-  const dropped = b.dropped;
-  b.dropped = 0;
-  return { dropped };
+  return true;
 }
 
-/** Test seam: forget every budget. */
+/** Hold a visit until a call is available. Past the cap the oldest is dropped, and counted. */
+function enqueue(key: string, event: VisitEvent): void {
+  const q = queues.get(key) ?? { events: [], dropped: 0 };
+  queues.set(key, q);
+  q.events.push(event);
+  while (q.events.length > MAX_QUEUED_EVENTS) {
+    q.events.shift();
+    q.dropped += 1;
+  }
+}
+
+/**
+ * Take the next report's worth of visits, or `null` when there is nothing to send.
+ *
+ * Stale visits are pruned and counted BEFORE the slice, so they can neither be sent (where
+ * they would cost the whole report) nor vanish unrecorded.
+ */
+function drain(key: string, now: number): { events: VisitEvent[]; dropped: number } | null {
+  const q = queues.get(key);
+  if (!q) return null;
+
+  const fresh: VisitEvent[] = [];
+  for (const event of q.events) {
+    if (now - Date.parse(event.ts) > MAX_EVENT_AGE_MS) q.dropped += 1;
+    else fresh.push(event);
+  }
+  q.events = fresh;
+
+  // Nothing to send: KEEP the drop count for the next report that does go out. Clearing it
+  // here would lose exactly the number this whole mechanism exists to preserve — a count
+  // Geoffy never hears about is one it presents as a total.
+  if (q.events.length === 0) return null;
+
+  const events = q.events.splice(0, MAX_EVENTS_PER_REPORT);
+  const dropped = q.dropped;
+  q.dropped = 0;
+  return { events, dropped };
+}
+
+/** Test seam: forget every budget and every queued visit. */
 export function resetAiVisitBudgets(): void {
   budgets.clear();
+  queues.clear();
 }
 
 /**
@@ -154,15 +240,11 @@ export function trackAiVisit(opts: GeoffyAiVisitOptions, request: Request, defer
     if (!agent && !referral) return;
     if (!sampled(opts.sample)) return;
 
-    // Anyone can send a crawler's user agent or an assistant's referer, so the report rate is
-    // bounded per process. What is dropped is counted and reported with the next send. Crawler
-    // visits and referrals have separate budgets, so a flood of spoofed crawler requests cannot
-    // crowd out the shoppers arriving from an assistant.
-    const budget = takeBudget(`${listKey}|${agent ? "agent" : "referral"}`);
-    if (budget === null) return;
-
     const event: VisitEvent = {
-      ts: new Date().toISOString(),
+      // One clock for the whole module: `Date.now()` is what the budget and the freshness
+      // prune read, and a visit stamped from a different source could be pruned the instant
+      // it is queued.
+      ts: new Date(Date.now()).toISOString(),
       path: `${url.origin}${url.pathname}`,
       ...referral,
     };
@@ -174,11 +256,24 @@ export function trackAiVisit(opts: GeoffyAiVisitOptions, request: Request, defer
       if (ip) event.ip = ip;
     }
 
+    // Crawler visits and referrals keep separate budgets AND separate queues, so a flood of
+    // spoofed crawler requests can neither spend the calls nor fill the queue that the
+    // shoppers arriving from an assistant depend on.
+    const kind = `${listKey}|${agent ? "agent" : "referral"}`;
+    enqueue(kind, event);
+
+    // The bound is on CALLS. A visit that arrives with the budget spent waits for the next
+    // one rather than being thrown away, and that call takes the whole queue with it — which
+    // is why a crawler sweep no longer outruns the reporter.
+    if (!takeBudget(kind)) return;
+    const batch = drain(kind, Date.now());
+    if (!batch || batch.events.length === 0) return;
+
     const sampleRate = normalisedSample(opts.sample);
     const payload: VisitPayload = {
-      events: [event],
+      events: batch.events,
       ...(sampleRate < 1 ? { sampleRate } : {}),
-      ...(budget.dropped > 0 ? { dropped: budget.dropped } : {}),
+      ...(batch.dropped > 0 ? { dropped: batch.dropped } : {}),
     };
     const base = `${origin}/headless/${encodeURIComponent(siteKey)}`;
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
