@@ -40,7 +40,8 @@ export interface GeoffyAiVisitOptions {
    *
    * Default: the address Vercel sets (`x-vercel-forwarded-for`, read only when running on
    * Vercel), else nothing. Never the first `X-Forwarded-For` entry — that one is whatever the
-   * client chose to send.
+   * client chose to send. Self-hosted behind a proxy that overwrites `X-Real-IP`, pass
+   * `(request) => request.headers.get("x-real-ip")`.
    */
   clientIp?: (request: Request) => string | null | undefined;
   /**
@@ -267,7 +268,7 @@ export function trackAiVisit(opts: GeoffyAiVisitOptions, request: Request, defer
       // prune read, and a visit stamped from a different source could be pruned the instant
       // it is queued.
       ts: new Date(Date.now()).toISOString(),
-      path: `${url.origin}${url.pathname}`,
+      path: `${publicOrigin(request, url)}${url.pathname}`,
       ...referral,
     };
     // The user agent and an address only for a visit that CLAIMS to be a crawler: they are what
@@ -375,6 +376,72 @@ async function sendVisits(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * The origin a visitor used to reach this page.
+ *
+ * On Vercel and most edge platforms `request.url` already carries the public host. A self-hosted
+ * server does not: `next start`, for one, hands middleware `http(s)://localhost:<port>/…`
+ * whatever `Host` the proxy sent, and a report on `localhost` is a visit to no site at all.
+ *
+ * So when the URL names an internal host (loopback, a private or link-local address, or a
+ * single-label name such as a container's), the origin is rebuilt from the headers the proxy
+ * forwards: `X-Forwarded-Host`, else `Host`, and `X-Forwarded-Proto`. A public URL is left alone,
+ * so a client cannot move a report to another host by sending those headers itself. A header
+ * that is not a plain host name is ignored rather than trusted, and the pathname never changes.
+ */
+function publicOrigin(request: Request, url: URL): string {
+  if (!isInternalHost(url.hostname)) return url.origin;
+  const h = request.headers;
+  const host = forwardedHost(firstValue(h.get("x-forwarded-host")) ?? firstValue(h.get("host")));
+  if (!host) return url.origin;
+  const proto = firstValue(h.get("x-forwarded-proto"))?.toLowerCase();
+  const scheme = proto === "http" || proto === "https" ? proto : url.protocol.replace(/:$/, "");
+  const defaultPort = scheme === "https" ? ":443" : ":80";
+  return `${scheme}://${host.endsWith(defaultPort) ? host.slice(0, -defaultPort.length) : host}`;
+}
+
+function firstValue(header: string | null): string | null {
+  const first = header?.split(",")[0]?.trim();
+  return first ? first : null;
+}
+
+const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/** A DNS name with an optional port, lower-cased, or `null` for anything else. */
+function forwardedHost(value: string | null): string | null {
+  if (!value) return null;
+  const match = /^([^:]+)(?::(\d{1,5}))?$/.exec(value.toLowerCase());
+  if (!match) return null;
+  const [, name, port] = match;
+  if (name.length > 253 || !name.split(".").every((label) => DNS_LABEL.test(label))) return null;
+  if (port !== undefined && (Number(port) < 1 || Number(port) > 65535)) return null;
+  return port === undefined ? name : `${name}:${port}`;
+}
+
+/** Loopback, unspecified, private (RFC 1918), link-local, or a single-label name. */
+function isInternalHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  if (host.includes(":")) {
+    // IPv6: loopback, unspecified, link-local (fe80::/10).
+    return host === "::1" || host === "::" || /^fe[89ab][0-9a-f]:/.test(host);
+  }
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host);
+  if (v4) {
+    const a = Number(v4[1]);
+    const b = Number(v4[2]);
+    return (
+      a === 127 ||
+      a === 10 ||
+      a === 0 ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 169 && b === 254)
+    );
+  }
+  return !host.includes(".");
 }
 
 function resolveSecret(opts: GeoffyAiVisitOptions): string {

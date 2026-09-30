@@ -607,3 +607,115 @@ describe("astro middleware", () => {
     assert.equal(await onRequest(null, async () => response), response);
   });
 });
+
+describe("self-hosted: the public host behind a proxy", () => {
+  /** A request as a self-hosted server hands it to middleware: an internal URL, the real host in headers. */
+  const internal = (url, headers = {}) => new Request(url, { headers: { "user-agent": GPTBOT, ...headers } });
+
+  async function reportedEvent(request, opts = {}) {
+    const calls = stubFetch();
+    const { event, settle } = deferredEvent();
+    createGeoffyAiVisitMiddleware({ siteKey: "sk", secret: SECRET, ...opts })(request, event);
+    await settle();
+    const sent = posts(calls);
+    assert.equal(sent.length, 1);
+    return JSON.parse(sent[0].init.body).events[0];
+  }
+  const reportedPath = async (request) => (await reportedEvent(request)).path;
+
+  it("reports the forwarded host and protocol for a localhost URL", async () => {
+    const path = await reportedPath(
+      internal("https://localhost:3999/en/products/tablets?x=1", {
+        "x-forwarded-host": "shop.example",
+        "x-forwarded-proto": "https",
+      }),
+    );
+    assert.equal(path, "https://shop.example/en/products/tablets");
+  });
+
+  it("reads the first value of a forwarded list, and keeps an explicit port", async () => {
+    const path = await reportedPath(
+      internal("http://127.0.0.1:3000/p", {
+        "x-forwarded-host": "Shop.Example:8443, proxy.internal",
+        "x-forwarded-proto": "https, http",
+      }),
+    );
+    assert.equal(path, "https://shop.example:8443/p");
+  });
+
+  it("falls back to the Host header when there is no X-Forwarded-Host", async () => {
+    const path = await reportedPath(internal("http://localhost:3000/p", { host: "shop.example" }));
+    assert.equal(path, "http://shop.example/p");
+  });
+
+  it("uses the forwarded host for a private, link-local or single-label URL", async () => {
+    for (const url of [
+      "http://10.0.0.5:3000/p",
+      "http://192.168.1.20/p",
+      "http://172.20.0.3:8080/p",
+      "http://[::1]:3000/p",
+      "http://[fe80::1]:3000/p",
+      "http://0.0.0.0:3000/p",
+      "http://app.localhost:3000/p",
+      "http://web:3000/p",
+    ]) {
+      __resetGeoffyAiVisits();
+      const path = await reportedPath(internal(url, { "x-forwarded-host": "shop.example", "x-forwarded-proto": "https" }));
+      assert.equal(path, "https://shop.example/p", url);
+    }
+  });
+
+  it("leaves a public URL unchanged, whatever the headers say", async () => {
+    for (const url of ["https://storefront.example/p", "https://172.32.0.1/p", "https://11.0.0.1/p"]) {
+      __resetGeoffyAiVisits();
+      const path = await reportedPath(
+        internal(url, { "x-forwarded-host": "other.example", "x-forwarded-proto": "http" }),
+      );
+      assert.equal(path, url, url);
+    }
+  });
+
+  it("falls back to the request URL when the forwarded host is malformed", async () => {
+    for (const bad of [
+      "evil.example/x",
+      "user@evil.example",
+      "evil .example",
+      "-evil.example",
+      "evil..example",
+      "evil.example:99999",
+      "evil.example:",
+      "evil_host.example",
+    ]) {
+      __resetGeoffyAiVisits();
+      const path = await reportedPath(internal("http://localhost:3000/p", { "x-forwarded-host": bad }));
+      assert.equal(path, "http://localhost:3000/p", bad);
+    }
+  });
+
+  it("keeps the URL's protocol when the forwarded one is not http or https", async () => {
+    const path = await reportedPath(
+      internal("http://localhost:3000/p", { "x-forwarded-host": "shop.example", "x-forwarded-proto": "javascript" }),
+    );
+    assert.equal(path, "http://shop.example/p");
+  });
+
+  it("does not trust X-Real-IP by default, and uses it through clientIp", async () => {
+    const request = () =>
+      internal("http://localhost:3000/p", { "x-forwarded-host": "shop.example", "x-real-ip": "20.171.207.5" });
+    assert.equal((await reportedEvent(request())).ip, undefined);
+    __resetGeoffyAiVisits();
+    const ev = await reportedEvent(request(), { clientIp: (r) => r.headers.get("x-real-ip") });
+    assert.equal(ev.ip, "20.171.207.5");
+  });
+
+  it("does the same through the Astro middleware", async () => {
+    const calls = stubFetch();
+    const onRequest = createAstroMiddleware({ siteKey: "sk", secret: SECRET });
+    await onRequest(
+      { request: internal("http://localhost:4321/p", { "x-forwarded-host": "shop.example", "x-forwarded-proto": "https" }) },
+      async () => new Response("page"),
+    );
+    await until(() => posts(calls).length > 0);
+    assert.equal(JSON.parse(posts(calls)[0].init.body).events[0].path, "https://shop.example/p");
+  });
+});

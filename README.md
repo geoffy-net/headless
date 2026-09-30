@@ -947,7 +947,7 @@ gap.
 |---|---|
 | Vercel, with visitors reaching Vercel directly | the address Vercel sets for the request — nothing to configure |
 | Vercel behind another CDN or proxy | Vercel sees the CDN's address, so crawler visits cannot be confirmed. Pass `clientIp` with the address your CDN vouches for |
-| Anywhere else | none: visits are reported without an address |
+| Anywhere else | none: visits are reported without an address. Self-hosted behind a proxy? See [Self-hosted (not Vercel)](#self-hosted-not-vercel) |
 
 The default never reads `X-Forwarded-For`. Its first entry is whatever the client chose to
 send, so trusting it would let anyone claim to be a crawler from a vendor's address range.
@@ -966,6 +966,46 @@ On Astro the function also receives the middleware context, so
 `clientIp: (request, context) => context.clientAddress` is available — but check where your
 adapter gets that value first: an adapter that reads `X-Forwarded-For` hands you the
 client's own claim.
+
+### Self-hosted (not Vercel)
+
+When you run the site yourself (`next start`, or Astro's Node adapter) behind a reverse proxy,
+the URL your server hands the middleware names the server, not your domain: Next.js gives it
+`http://localhost:<port>/…` whatever host the visitor asked for. From 0.3.2 the middleware
+handles this. When the request URL names an internal host (`localhost`, a loopback, private or
+link-local address, or a single-label name such as a container's), the reported URL takes its
+host from `X-Forwarded-Host` (else `Host`) and its protocol from `X-Forwarded-Proto`. A value
+that is not a plain host name is ignored, and a public request URL is never rewritten.
+
+So your proxy must pass those headers on. For nginx:
+
+```nginx
+location / {
+  proxy_pass http://127.0.0.1:3000;
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-Host $host;
+  proxy_set_header X-Forwarded-Proto $scheme;
+  proxy_set_header X-Real-IP $remote_addr;
+}
+```
+
+Other proxies (Caddy, Traefik, a load balancer) set the forwarded headers by default or with one
+setting; check that yours does.
+
+Without a trusted address, a visit that claims to be an AI crawler is reported but cannot be
+confirmed as the real crawler. The last line above makes nginx write the connecting address into
+`X-Real-IP`, replacing anything the client sent. Pass it as `clientIp`:
+
+```ts
+createGeoffyAiVisitMiddleware({
+  siteKey: process.env.GEOFFY_SITE_KEY!,
+  clientIp: (request) => request.headers.get("x-real-ip"),
+});
+```
+
+Only do this when every request reaches your server through that proxy. If the server port is
+reachable directly, a client can send its own `X-Real-IP`; that is why the package never reads
+it by default.
 
 ### Options
 
