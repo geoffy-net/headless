@@ -855,7 +855,7 @@ middleware, and it is entirely optional: nothing else in this guide depends on i
 It reports a request when **either** of these is true:
 
 - the user agent names a known AI agent (GPTBot, OAI-SearchBot, ChatGPT-User, ClaudeBot,
-  PerplexityBot, Google-Extended, Amazonbot, CCBot, bingbot and others), or
+  PerplexityBot, Applebot, Amazonbot, CCBot, bingbot, YouBot and others), or
 - the visitor arrived from an AI assistant: the `referer` is, or `utm_source` names,
   chatgpt.com, chat.openai.com, perplexity.ai, gemini.google.com, copilot.microsoft.com,
   claude.ai or grok.com.
