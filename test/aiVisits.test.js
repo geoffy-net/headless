@@ -549,6 +549,47 @@ describe("next middleware: the agent list", () => {
   });
 });
 
+describe("next middleware: the built-in agent list", () => {
+  /** Every event sent across every POST, so batching cannot hide or double one. */
+  const sentEvents = (calls) => posts(calls).flatMap((c) => JSON.parse(c.init.body).events);
+
+  it("recognises every agent Geoffy counts before any list read succeeds", async () => {
+    const agents = {
+      YouBot:
+        "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; YouBot/1.0; +https://docs.you.com/youbot; env:prod) Chrome/124.0.0.0 Safari/537.36",
+      Applebot:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1.1 Safari/605.1.15 (Applebot/0.1; +http://www.apple.com/go/applebot)",
+      DuckAssistBot: "DuckAssistBot/1.2; (+http://duckduckgo.com/duckassistbot.html)",
+      "MistralAI-User": "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; MistralAI-User/1.0; +https://docs.mistral.ai/robots)",
+      "Amzn-User": "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Amzn-User/0.1) Chrome/119.0.6045.214 Safari/537.36",
+      "meta-externalfetcher": "meta-externalfetcher/1.1 (+https://developers.facebook.com/docs/sharing/webmasters/crawler)",
+      "Google-CloudVertexBot": "Mozilla/5.0 (compatible; Google-CloudVertexBot; +https://cloud.google.com/enterprise-search)",
+    };
+    // The list read fails, so only the built-in list can match.
+    const calls = stubFetch({ agents: null });
+    const { event, settle } = deferredEvent();
+    const mw = createGeoffyAiVisitMiddleware({ siteKey: "sk", secret: SECRET });
+    for (const [name, ua] of Object.entries(agents)) {
+      mw(page(`/p/${name}`, { "user-agent": ua }), event);
+      await settle();
+    }
+    assert.deepEqual(
+      sentEvents(calls).map((e) => e.ua).sort(),
+      Object.values(agents).sort(),
+    );
+  });
+
+  it("reports nothing for a robots.txt control token, which no crawler sends", async () => {
+    const calls = stubFetch({ agents: null });
+    const { event, settle } = deferredEvent();
+    const mw = createGeoffyAiVisitMiddleware({ siteKey: "sk", secret: SECRET });
+    mw(page("/a", { "user-agent": "Google-Extended" }), event);
+    mw(page("/b", { "user-agent": "Mozilla/5.0 (compatible; Applebot-Extended)" }), event);
+    await settle();
+    assert.equal(calls.length, 0);
+  });
+});
+
 describe("astro middleware", () => {
   function context(path, headers, locals = {}) {
     return { request: page(path, headers), locals };

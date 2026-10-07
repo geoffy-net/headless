@@ -14,29 +14,41 @@
 /**
  * The AI agents recognised with no network call at all.
  *
- * Some of these (`Google-Extended`, `Applebot-Extended`) are robots.txt product tokens that
- * rarely appear in a user agent; they cost nothing to keep and match if a vendor starts sending
- * them. `bingbot` is here because Microsoft's assistant answers from Bing's index.
+ * Kept equal to the list Geoffy classifies, which `agents.json` also serves. A token outside
+ * that list costs a report that Geoffy then discards, and a token missing here goes unreported
+ * until the first list read after a restart. Robots.txt control tokens (`Google-Extended`,
+ * `Applebot-Extended`) are deliberately absent: no request carries them, so a user agent that
+ * names one is not a crawler Geoffy can count. `Applebot/` keeps its slash for the same
+ * reason, so it never matches a header that names only `Applebot-Extended`. `bingbot` is here
+ * because Microsoft's assistant answers from Bing's index.
  */
 export const BUILT_IN_AI_AGENT_SIGNATURES: readonly string[] = [
-  "GPTBot",
   "OAI-SearchBot",
   "ChatGPT-User",
-  "ClaudeBot",
-  "Claude-User",
+  "GPTBot",
   "Claude-SearchBot",
+  "Claude-User",
+  "ClaudeBot",
+  "anthropic-ai",
   "PerplexityBot",
   "Perplexity-User",
-  "Google-Extended",
   "GoogleOther",
   "Gemini-Deep-Research",
   "Google-Agent",
-  "Applebot-Extended",
-  "Amazonbot",
-  "meta-externalagent",
+  "Google-CloudVertexBot",
+  "Applebot/",
   "CCBot",
   "Bytespider",
+  "Amzn-SearchBot",
+  "Amzn-User",
+  "Amazonbot",
+  "meta-externalagent",
+  "meta-externalfetcher",
+  "meta-webindexer",
   "bingbot",
+  "DuckAssistBot",
+  "MistralAI-User",
+  "YouBot",
 ];
 
 /** How long a list read from Geoffy is trusted before it is read again. */
