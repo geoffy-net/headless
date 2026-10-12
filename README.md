@@ -117,6 +117,35 @@ give it a full-width container rather than a narrow column. Its CSS is scoped en
 `.geoffy-widget` and inherits your font and colour, so it cannot restyle the rest of your
 page and needs no dark-mode handling from you.
 
+### When your site owns its structured data
+
+The pairing runs one way only. Structured data never renders without the widget, but the
+widget may render alone. Geoffy sends no structured data for a page when:
+
+- your site's **Structured data** setting in Geoffy is **Never**, because a plugin or your own
+  code already owns the page's schema; or
+- the page already carries its own node of the same type, so a second one would disagree with it.
+
+The component then renders the widget and no `<script type="application/ld+json">`. The Astro
+helper returns an empty `jsonLdScript`, so the `slot="head"` fragment renders nothing. You do not
+change your code for this; versions before 0.3.4 render nothing at all for such a page, so
+upgrade before you set the switch to Never.
+
+### Pages that are not products
+
+A programme, a course or a service page works the same way. Geoffy writes the widget in that
+page's own words ("Why this programme?") and, where it adds structured data, uses the page's own
+type (a programme page gets an `EducationalOccupationalProgram`). The exports have names for
+such a page, which are the product exports under another name:
+
+| Product name | Same thing, named for any page |
+|---|---|
+| `GeoffyProduct` (`@geoffy/headless/next`) | `GeoffyContent` |
+| `getGeoffyProductMarkup` (`@geoffy/headless/astro`) | `getGeoffyContentMarkup` |
+| `fetchGeoffyProduct` (`@geoffy/headless`) | `fetchGeoffyContent` |
+
+Pass the page's handle as `handle`, exactly as for a product.
+
 ---
 
 ## Before you start
