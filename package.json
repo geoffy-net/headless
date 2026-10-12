@@ -1,6 +1,6 @@
 {
   "name": "@geoffy/headless",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Server-side Geoffy discovery surfaces for a custom-built storefront (Next.js, Astro).",
   "keywords": [
     "geoffy",
