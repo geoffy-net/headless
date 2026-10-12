@@ -720,9 +720,10 @@ function notFound(robots: string | null = null): Response {
  * check is an allow-list of one shape, not a filter of bad ones. A second value, another `rel`,
  * an extra parameter or an http URL is dropped whole.
  */
-// The URL is printable ASCII without space, `<`, `>` or `"`. A canonical URL is sent
-// percent-encoded, so anything else is not one.
-const CANONICAL_LINK = /^<(https:\/\/[^\x00-\x20\x7f-\uffff<>"]+)>; ?rel="canonical"$/;
+// The URL is printable ASCII without space, `<`, `>`, `"` or `\`. A canonical URL is sent
+// percent-encoded, so anything else is not one. A backslash is refused because parsers do not
+// agree on it: a WHATWG parser reads it as `/`, a parser that follows RFC 3986 does not.
+const CANONICAL_LINK = /^<(https:\/\/[^\x00-\x20\x7f-\uffff<>"\\]+)>; ?rel="canonical"$/;
 
 function canonicalLink(raw: string | null): string | null {
   const match = raw === null ? null : CANONICAL_LINK.exec(raw);
@@ -730,6 +731,10 @@ function canonicalLink(raw: string | null): string | null {
   try {
     const url = new URL(match[1]);
     if (url.username !== "" || url.password !== "") return null;
+    // The value must already be in its normal form. Then every parser reads the host we
+    // checked. This also refuses an empty authority (`https:///x`), which a WHATWG parser
+    // silently repairs into a different host.
+    if (url.href !== match[1]) return null;
   } catch {
     return null;
   }
