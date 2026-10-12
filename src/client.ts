@@ -628,6 +628,10 @@ interface GeoffyArtifact {
   status: number;
   /** The upstream `location`, on a 3xx. Never followed by us — see `handleGeoffyProxy`. */
   location: string | null;
+  /** The upstream `link`, raw. Checked by `canonicalLink` before it is served. */
+  link: string | null;
+  /** The upstream `x-robots-tag`, raw. Checked by `robotsTag` before it is served. */
+  robots: string | null;
 }
 
 /**
@@ -678,7 +682,14 @@ async function fetchGeoffyArtifact(
     const body = await res.text();
     if (body.length > MAX_ARTIFACT_BYTES) return null;
 
-    return { body, contentType, status: res.status, location };
+    return {
+      body,
+      contentType,
+      status: res.status,
+      location,
+      link: res.headers.get("link"),
+      robots: res.headers.get("x-robots-tag"),
+    };
   } catch {
     return null;
   } finally {
@@ -689,14 +700,54 @@ async function fetchGeoffyArtifact(
 const PLAIN_TEXT = "text/plain; charset=utf-8";
 
 /** "There is nothing here." A settled answer a crawler may act on. */
-function notFound(): Response {
+function notFound(robots: string | null = null): Response {
+  const headers: Record<string, string> = { "content-type": PLAIN_TEXT, "cache-control": "no-store" };
+  if (robots !== null) headers["x-robots-tag"] = robots;
   return new Response("Not found\n", {
     status: 404,
     // `no-store`, because a transient absence must not become a cached one. A guide published
     // a minute after a crawler asked for it would otherwise stay "missing" in the merchant's
     // CDN for whatever heuristic window that CDN applies to an uncached 404.
-    headers: { "content-type": PLAIN_TEXT, "cache-control": "no-store" },
+    headers,
   });
+}
+
+/**
+ * The one `link` shape this proxy serves: a single canonical link to an https URL.
+ *
+ * A plain-text twin names its HTML page as canonical, so a search engine that indexes the twin
+ * credits the page. Every header copied here is one the merchant's own domain asserts, so the
+ * check is an allow-list of one shape, not a filter of bad ones. A second value, another `rel`,
+ * an extra parameter or an http URL is dropped whole.
+ */
+// The URL is printable ASCII without space, `<`, `>` or `"`. A canonical URL is sent
+// percent-encoded, so anything else is not one.
+const CANONICAL_LINK = /^<(https:\/\/[^\x00-\x20\x7f-\uffff<>"]+)>; ?rel="canonical"$/;
+
+function canonicalLink(raw: string | null): string | null {
+  const match = raw === null ? null : CANONICAL_LINK.exec(raw);
+  if (!match) return null;
+  try {
+    const url = new URL(match[1]);
+    if (url.username !== "" || url.password !== "") return null;
+  } catch {
+    return null;
+  }
+  return `<${match[1]}>; rel="canonical"`;
+}
+
+/**
+ * Robots directives this proxy serves. Each one only narrows what a crawler does with the
+ * response it is attached to. A directive outside the list, or one scoped to a named crawler,
+ * drops the whole header rather than a part of it.
+ */
+const ROBOTS_DIRECTIVES = new Set(["noindex", "nofollow", "none"]);
+
+function robotsTag(raw: string | null): string | null {
+  if (raw === null) return null;
+  const directives = raw.split(",").map((d) => d.trim().toLowerCase());
+  if (!directives.every((d) => ROBOTS_DIRECTIVES.has(d))) return null;
+  return directives.join(", ");
 }
 
 /**
@@ -804,7 +855,10 @@ export async function handleGeoffyProxy(
     }
 
     if (isRetryableStatus(artifact.status)) return unavailable();
-    if (artifact.status >= 400) return notFound();
+    // The robots tag survives onto the 404 we answer for a settled absence, so a crawler does
+    // not index the merchant's "Not found" page. It is not copied onto a 503: "ask again" must
+    // not carry an instruction to drop the page.
+    if (artifact.status >= 400) return notFound(robotsTag(artifact.robots));
 
     // The content type is passed through, not re-declared: a markdown twin served as
     // text/html is not the surface Geoffy published, and Geoffy's own mount check refuses to
@@ -814,14 +868,20 @@ export async function handleGeoffyProxy(
     // `nosniff` and `sandbox` are the belt: the first stops a browser inferring a type we did
     // not send, the second means guide HTML — which IS served from the merchant's origin —
     // cannot script it.
-    return new Response(artifact.body, {
-      headers: {
-        "content-type": artifact.contentType,
-        "cache-control": GEOFFY_CACHE_CONTROL,
-        "x-content-type-options": "nosniff",
-        "content-security-policy": "sandbox allow-popups; default-src 'none'; style-src 'unsafe-inline'",
-      },
-    });
+    //
+    // Two upstream headers are copied, and only in the shapes checked above: the canonical
+    // `link` a plain-text twin carries, and the robots tag. Nothing else from upstream is.
+    const headers: Record<string, string> = {
+      "content-type": artifact.contentType,
+      "cache-control": GEOFFY_CACHE_CONTROL,
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "sandbox allow-popups; default-src 'none'; style-src 'unsafe-inline'",
+    };
+    const link = canonicalLink(artifact.link);
+    if (link !== null) headers.link = link;
+    const robots = robotsTag(artifact.robots);
+    if (robots !== null) headers["x-robots-tag"] = robots;
+    return new Response(artifact.body, { headers });
   } catch {
     return unavailable();
   }

@@ -438,6 +438,17 @@ unreachable, rate-limiting, or erroring, this route answers **503** with a `Retr
 never a fabricated 404, so a crawler retries instead of dropping the page from its index. And
 query strings are not forwarded, because no artifact reads one.
 
+**Two headers come through from Geoffy.** Each plain-text twin (`.md`) answers with a
+`Link: <https://…>; rel="canonical"` header. It names the HTML page on your domain: the buying
+guide for a guide twin, your product page for a product twin. A search engine that indexes the
+twin then gives the credit to that page. When Geoffy marks a response `X-Robots-Tag: noindex`,
+the route keeps that header too, also on a 404. No other header from Geoffy is copied, and a
+value in an unexpected shape is dropped. Do not remove these two headers in a CDN or a
+middleware in front of the route.
+
+**A moved guide redirects on your domain.** When a buying guide gets a new address, its old
+address answers `301` with a `Location` under `/apps/geoffy/`, never one on Geoffy's domain.
+
 ### 6. Crawler rules
 
 Merge the Geoffy lines into your existing `robots.txt`. Do not replace your file — yours
@@ -693,6 +704,10 @@ stops.
 You also need on-demand rendering: an adapter and `output: "server"`, or the Astro 5 default
 plus `prerender = false` here. A fully prerendered site cannot serve this route at all — do not
 add the file, and your content stays reachable at Geoffy's own domain instead.
+
+The endpoint behaves as the Next route does: a `503` with `Retry-After` when Geoffy is
+unreachable, the canonical `Link` header on each plain-text twin, `X-Robots-Tag` when Geoffy
+sends it, and a `301` under `/apps/geoffy/` for a guide that moved.
 
 Until you add this, Geoffy says less rather than pointing crawlers at pages that are not there.
 
@@ -1197,3 +1212,12 @@ that it is served as XML rather than HTML.
 
 If the mount does not pass, it is reported as not done and your `llms.txt` keeps quiet about the
 surfaces behind it — rather than advertising URLs that answer with your home page.
+
+To see the canonical header on a plain-text twin, ask for one of your products:
+
+```bash
+curl -s -D - -o /dev/null https://yourdomain.com/apps/geoffy/llm/{handle}.md | grep -i '^link'
+# link: <https://yourdomain.com/…/products/{handle}>; rel="canonical"
+```
+
+If the line is missing, something in front of the route removes the `Link` header.

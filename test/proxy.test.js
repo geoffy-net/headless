@@ -20,11 +20,17 @@ after(() => {
   globalThis.fetch = realFetch;
 });
 
-function stubFetch({ status = 200, contentType = "text/markdown; charset=utf-8", body = "# Tablets", location } = {}) {
+function stubFetch({
+  status = 200,
+  contentType = "text/markdown; charset=utf-8",
+  body = "# Tablets",
+  location,
+  headers: extra = {},
+} = {}) {
   const calls = [];
   globalThis.fetch = async (url, init) => {
     calls.push({ url: String(url), init });
-    const headers = { "content-type": contentType };
+    const headers = { ...extra, "content-type": contentType };
     if (location) headers.location = location;
     // 204/304 forbid a body; a redirect fixture wants none either.
     const hasBody = status !== 204 && status !== 304 && !(status >= 300 && status < 400);
@@ -377,5 +383,142 @@ describe("the framework entry points, which nothing loaded before", () => {
     const calls = stubFetch();
     await handleGeoffyProxy({ siteKey: "sk" }, req("/apps/geoffy/sitemap.xml"));
     assert.deepEqual(calls[0].init.next.tags, [GEOFFY_NAMESPACE_TAG]);
+  });
+});
+
+describe("upstream headers the namespace keeps", () => {
+  const CANONICAL = '<https://storefront.example/apps/geoffy/guides/best-tablets>; rel="canonical"';
+
+  it("passes a canonical Link header through on a 200 twin", async () => {
+    // A crawler that indexes the plain-text twin must credit the HTML page, not the twin.
+    for (const [path, link] of [
+      ["/apps/geoffy/guides/best-tablets.md", CANONICAL],
+      ["/apps/geoffy/llm/tablets.md", '<https://storefront.example/products/tablets>; rel="canonical"'],
+    ]) {
+      stubFetch({ headers: { link } });
+
+      const res = await handleGeoffyProxy({ siteKey: "sk" }, req(path));
+
+      assert.equal(res.status, 200, path);
+      assert.equal(res.headers.get("link"), link, path);
+      assert.equal(await res.text(), "# Tablets", path);
+    }
+  });
+
+  it("drops every Link that is not exactly one https canonical", async () => {
+    // A copied header is a header the merchant's domain asserts. Only the one shape Geoffy
+    // sends is let through; anything else could add a preload, a second canonical, or a
+    // link to another rel on the merchant's behalf.
+    for (const link of [
+      '<http://storefront.example/products/tablets>; rel="canonical"',
+      '</products/tablets>; rel="canonical"',
+      '<https://storefront.example/a>; rel="canonical", <https://evil.example/b>; rel="canonical"',
+      '<https://storefront.example/a>; rel="preload"',
+      '<https://storefront.example/a>; rel="canonical"; as="script"',
+      '<https://storefront.example/a>; rel=canonical',
+      '<https://user:pass@storefront.example/a>; rel="canonical"',
+      '<https://storefront example/a>; rel="canonical"',
+      '<https://>; rel="canonical"',
+      '<https://storefront.example/a\x01b>; rel="canonical"',
+      '<https://storefront.example/caf\u00e9>; rel="canonical"',
+      "",
+    ]) {
+      stubFetch({ headers: { link } });
+
+      const res = await handleGeoffyProxy({ siteKey: "sk" }, req("/apps/geoffy/llm/tablets.md"));
+
+      assert.equal(res.status, 200, link);
+      assert.equal(res.headers.get("link"), null, link);
+      assert.equal(await res.text(), "# Tablets", link);
+    }
+  });
+
+  it("passes X-Robots-Tag on the 404 it answers for an upstream 404 or 410", async () => {
+    // The proxy answers its own 404 for a settled absence. The upstream noindex must survive
+    // that, or a crawler may index the merchant's "Not found" page.
+    for (const status of [404, 410]) {
+      stubFetch({ status, body: "", headers: { "x-robots-tag": "noindex" } });
+
+      const res = await handleGeoffyProxy({ siteKey: "sk" }, req("/apps/geoffy/guides/gone"));
+
+      assert.equal(res.status, 404, `upstream ${status}`);
+      assert.equal(res.headers.get("x-robots-tag"), "noindex", `upstream ${status}`);
+      assert.equal(res.headers.get("link"), null, `upstream ${status}`);
+    }
+  });
+
+  it("passes an allowed X-Robots-Tag on a 200 and drops anything outside the allow-list", async () => {
+    for (const [sent, kept] of [
+      ["noindex", "noindex"],
+      ["NoIndex, nofollow", "noindex, nofollow"],
+      ["none", "none"],
+      ["noindex,nofollow", "noindex, nofollow"],
+      ["googlebot: noindex", null],
+      ["unavailable_after: 2030-01-01", null],
+      ["noindex, max-snippet:0", null],
+      ["index", null],
+      ["", null],
+      [" , ", null],
+    ]) {
+      stubFetch({ headers: { "x-robots-tag": sent } });
+
+      const res = await handleGeoffyProxy({ siteKey: "sk" }, req("/apps/geoffy/guides/best-tablets"));
+
+      assert.equal(res.status, 200, sent);
+      assert.equal(res.headers.get("x-robots-tag"), kept, sent);
+    }
+  });
+
+  it("copies neither header onto a 503", async () => {
+    // "Ask again" must not carry an instruction to drop the page.
+    for (const status of [429, 502]) {
+      stubFetch({ status, body: "", headers: { "x-robots-tag": "noindex", link: CANONICAL } });
+
+      const res = await handleGeoffyProxy({ siteKey: "sk" }, req("/apps/geoffy/guides/best-tablets.md"));
+
+      assert.equal(res.status, 503, `upstream ${status}`);
+      assert.equal(res.headers.get("x-robots-tag"), null, `upstream ${status}`);
+      assert.equal(res.headers.get("link"), null, `upstream ${status}`);
+    }
+  });
+
+  it("rewrites an origin-relative redirect onto the mount and keeps its status", async () => {
+    // Geoffy answers a retired guide slug with a Location relative to its own origin.
+    for (const [status, location, expected] of [
+      [301, "/headless/sk/guides/new-slug", "/apps/geoffy/guides/new-slug"],
+      [301, "/headless/sk/guides/new-slug.md", "/apps/geoffy/guides/new-slug.md"],
+      [308, "/headless/sk/guides/new-slug", "/apps/geoffy/guides/new-slug"],
+    ]) {
+      stubFetch({ status, location });
+
+      const res = await handleGeoffyProxy({ siteKey: "sk" }, req("/apps/geoffy/guides/old-slug"));
+
+      assert.equal(res.status, status, location);
+      assert.equal(res.headers.get("location"), expected, location);
+    }
+  });
+
+  it("refuses an origin-relative redirect into another site key", async () => {
+    stubFetch({ status: 301, location: "/headless/sk_two/guides/x" });
+
+    const res = await handleGeoffyProxy({ siteKey: "sk" }, req("/apps/geoffy/guides/x"));
+
+    assert.equal(res.status, 404);
+    assert.equal(res.headers.get("location"), null);
+  });
+
+  it("the Next route and the Astro endpoint both carry the Link header", async () => {
+    stubFetch({ headers: { link: CANONICAL } });
+    const next = await createGeoffyProxyRoute({ siteKey: "sk" })(req("/apps/geoffy/guides/best-tablets.md"));
+
+    stubFetch({ headers: { link: CANONICAL } });
+    const astro = await createGeoffyProxyEndpoint({ siteKey: "sk" })({
+      request: req("/apps/geoffy/guides/best-tablets.md"),
+      params: {},
+      url: null,
+    });
+
+    assert.equal(next.headers.get("link"), CANONICAL);
+    assert.equal(astro.headers.get("link"), CANONICAL);
   });
 });
