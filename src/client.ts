@@ -124,8 +124,16 @@ export interface GeoffyProductArtifact {
   published?: true;
   /** The URL Geoffy published this product against. Compare it with your own canonical. */
   canonicalUrl: string;
-  /** schema.org Product node, ready to serialise into a script tag. */
-  jsonLd: unknown;
+  /**
+   * The schema.org node, ready to serialise into a script tag: a `Product` on a product page,
+   * the page's own type on another kind of page (a programme page carries an
+   * `EducationalOccupationalProgram`).
+   *
+   * `null` when Geoffy adds no structured data to this page: your site set "Structured data"
+   * to Never in the dashboard, or the page already carries its own node of that type. Render
+   * the widget alone. That is a complete answer, not a missing one.
+   */
+  jsonLd: unknown | null;
   /** The visible widget, styles included. Render as-is; do not sanitise the styles out. */
   widgetHtml: string;
   publishedAt: string | null;
@@ -190,10 +198,14 @@ export async function fetchGeoffyProduct(
     // the check below.
     if (body.published === false) return null;
 
-    // Both surfaces or neither. A page carrying our structured data without the visible
-    // widget makes claims to a crawler that a shopper cannot see, which is the one outcome
-    // this product must never produce.
-    if (!body.jsonLd || !body.widgetHtml) return null;
+    // Never structured data without the visible widget: a page carrying our structured data
+    // without the widget makes claims to a crawler that a shopper cannot see, which is the one
+    // outcome this product must never produce.
+    if (!body.widgetHtml) return null;
+    // The widget alone is a complete answer only when Geoffy SAYS so, with an explicit `null`:
+    // the site owns its structured data. A missing or empty value says nothing, so it stays a
+    // malformed answer.
+    if (body.jsonLd !== null && !body.jsonLd) return null;
     return body;
   } catch {
     return null;
@@ -201,6 +213,12 @@ export async function fetchGeoffyProduct(
     clearTimeout(timer);
   }
 }
+
+/**
+ * `fetchGeoffyProduct` under a name for a page that is not a product: a programme, a service.
+ * The same function; the endpoint serves every kind of page.
+ */
+export const fetchGeoffyContent = fetchGeoffyProduct;
 
 /* -------------------------------------------------------------------------------------------
  * The product manifest

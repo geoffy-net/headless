@@ -33,7 +33,12 @@ import { canRequest } from "./guard";
 const ASTRO_MANIFEST_MEMO_MS = 30_000;
 
 export interface GeoffyProductMarkup {
-  /** A complete `<script type="application/ld+json">` element. Put it in `<head>`. */
+  /**
+   * A complete `<script type="application/ld+json">` element. Put it in `<head>`.
+   *
+   * An empty string when Geoffy adds no structured data to this page (your site owns it), so
+   * the head slot renders nothing and the widget renders alone.
+   */
   jsonLdScript: string;
   /** The visible widget, styles included. Render with `set:html`. */
   widgetHtml: string;
@@ -55,7 +60,8 @@ export interface GeoffyProductMarkup {
  *
  * Both surfaces are returned together and there is no accessor for one alone, for the same
  * reason the Next component renders them as a pair: structured data without the visible
- * widget is a claim to a crawler that a shopper cannot see.
+ * widget is a claim to a crawler that a shopper cannot see. The widget may stand alone:
+ * `jsonLdScript` is empty when your site owns its structured data.
  *
  * ## `page.canonicalUrl`
  *
@@ -97,13 +103,20 @@ export async function getGeoffyProductMarkup(
   }
 
   return {
-    jsonLdScript: `<script type="application/ld+json" data-geoffy>${serializeJsonLd(
-      artifact.jsonLd,
-    )}</script>`,
+    jsonLdScript:
+      artifact.jsonLd === null
+        ? ""
+        : `<script type="application/ld+json" data-geoffy>${serializeJsonLd(artifact.jsonLd)}</script>`,
     widgetHtml: artifact.widgetHtml,
     artifact,
   };
 }
+
+/**
+ * `getGeoffyProductMarkup` under a name for a page that is not a product: a programme, a
+ * service. The same function.
+ */
+export const getGeoffyContentMarkup = getGeoffyProductMarkup;
 
 /**
  * Endpoint factory for the site-wide text files.

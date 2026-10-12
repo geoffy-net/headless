@@ -50,8 +50,12 @@ export interface GeoffyProductProps extends GeoffyClientOptions {
  *
  * Renders `null` when Geoffy has nothing published, or is unreachable. Put it wherever on
  * the product page you want the widget to appear; the structured data travels with it and
- * that pairing is not configurable, because a page that carries one without the other makes
- * claims to a crawler that a shopper cannot see.
+ * that pairing is not configurable, because a page that carries structured data without the
+ * widget makes claims to a crawler that a shopper cannot see.
+ *
+ * The widget can render alone: when your site owns its structured data ("Structured data:
+ * Never" in the dashboard, or a page that already carries its own node of the type), Geoffy
+ * sends no node and this renders the widget only.
  *
  *   export default async function Page({ params }) {
  *     const { handle } = await params;
@@ -139,11 +143,13 @@ export async function GeoffyProduct({
           serialised by `serializeJsonLd`, which escapes `<` so no string in the node can
           close the tag early, and the node itself is built by Geoffy's server-side emitter
           from vocabulary-gated fields rather than from raw merchant input. */}
-      <script
-        type="application/ld+json"
-        data-geoffy=""
-        dangerouslySetInnerHTML={{ __html: serializeJsonLd(artifact.jsonLd) }}
-      />
+      {artifact.jsonLd !== null && (
+        <script
+          type="application/ld+json"
+          data-geoffy=""
+          dangerouslySetInnerHTML={{ __html: serializeJsonLd(artifact.jsonLd) }}
+        />
+      )}
       {/*
         The widget's CSS travels INSIDE this HTML as a <style> element. Do not run it
         through a sanitiser that strips <style> — the widget then renders unstyled on a
@@ -160,6 +166,14 @@ export async function GeoffyProduct({
     </>
   );
 }
+
+/**
+ * `GeoffyProduct` under a name for a page that is not a product: a programme, a service. The
+ * same component; pass the page's handle as `handle`.
+ *
+ *   <GeoffyContent siteKey={process.env.GEOFFY_SITE_KEY!} handle={slug} />
+ */
+export const GeoffyContent = GeoffyProduct;
 
 export interface GeoffyTextRouteOptions {
   /**
