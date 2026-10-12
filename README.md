@@ -1221,3 +1221,6 @@ curl -s -D - -o /dev/null https://yourdomain.com/apps/geoffy/llm/{handle}.md | g
 ```
 
 If the line is missing, something in front of the route removes the `Link` header.
+
+An old buying-guide address answers `301` with a `Location` under `/apps/geoffy/`, never one on
+Geoffy's domain.

@@ -421,6 +421,12 @@ describe("upstream headers the namespace keeps", () => {
       '<https://>; rel="canonical"',
       '<https://storefront.example/a\x01b>; rel="canonical"',
       '<https://storefront.example/caf\u00e9>; rel="canonical"',
+      // A WHATWG parser reads host a.example; a reader that follows RFC 3986 reads b.example.
+      '<https://a.example\\@b.example/x>; rel="canonical"',
+      // A backslash in the query survives a WHATWG round trip, so only the character check drops it.
+      '<https://storefront.example/a?b\\c>; rel="canonical"',
+      // An empty authority. A WHATWG parser takes "foo" as the host.
+      '<https:///foo>; rel="canonical"',
       "",
     ]) {
       stubFetch({ headers: { link } });
@@ -437,7 +443,7 @@ describe("upstream headers the namespace keeps", () => {
     // The proxy answers its own 404 for a settled absence. The upstream noindex must survive
     // that, or a crawler may index the merchant's "Not found" page.
     for (const status of [404, 410]) {
-      stubFetch({ status, body: "", headers: { "x-robots-tag": "noindex" } });
+      stubFetch({ status, body: "", headers: { "x-robots-tag": "noindex", link: CANONICAL } });
 
       const res = await handleGeoffyProxy({ siteKey: "sk" }, req("/apps/geoffy/guides/gone"));
 
@@ -489,22 +495,32 @@ describe("upstream headers the namespace keeps", () => {
       [301, "/headless/sk/guides/new-slug.md", "/apps/geoffy/guides/new-slug.md"],
       [308, "/headless/sk/guides/new-slug", "/apps/geoffy/guides/new-slug"],
     ]) {
-      stubFetch({ status, location });
+      stubFetch({ status, location, headers: { "x-robots-tag": "noindex", link: CANONICAL } });
 
       const res = await handleGeoffyProxy({ siteKey: "sk" }, req("/apps/geoffy/guides/old-slug"));
 
       assert.equal(res.status, status, location);
       assert.equal(res.headers.get("location"), expected, location);
+      // A redirect carries neither header: the canonical and the robots tag belong to the
+      // page at the new address.
+      assert.equal(res.headers.get("link"), null, location);
+      assert.equal(res.headers.get("x-robots-tag"), null, location);
     }
   });
 
   it("refuses an origin-relative redirect into another site key", async () => {
-    stubFetch({ status: 301, location: "/headless/sk_two/guides/x" });
+    stubFetch({
+      status: 301,
+      location: "/headless/sk_two/guides/x",
+      headers: { "x-robots-tag": "noindex", link: CANONICAL },
+    });
 
     const res = await handleGeoffyProxy({ siteKey: "sk" }, req("/apps/geoffy/guides/x"));
 
     assert.equal(res.status, 404);
     assert.equal(res.headers.get("location"), null);
+    assert.equal(res.headers.get("link"), null);
+    assert.equal(res.headers.get("x-robots-tag"), null);
   });
 
   it("the Next route and the Astro endpoint both carry the Link header", async () => {
