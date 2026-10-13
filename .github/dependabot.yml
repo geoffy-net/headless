@@ -1,0 +1,18 @@
+# Dependabot: security alerts and security updates only. `open-pull-requests-limit: 0` turns
+# version updates off.
+#
+# Dependabot cannot open security pull requests for bun.lock yet, only raise alerts for it.
+# The package has no runtime dependencies, so a bun advisory affects the build tools only.
+version: 2
+updates:
+  - package-ecosystem: "bun"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
