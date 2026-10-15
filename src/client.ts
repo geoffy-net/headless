@@ -182,12 +182,10 @@ export async function fetchGeoffyProduct(
   page: { canonicalUrl?: string } = {},
 ): Promise<GeoffyProductArtifact | null> {
   if (!canRequest(opts.siteKey, handle)) return null;
+  // Before the timer, and it never throws: a canonical we cannot use asks as before, by handle.
+  const query = pathQuery(page.canonicalUrl);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 4000);
-
-  // Only a canonical we can read becomes a path. An unreadable one asks as before, by handle.
-  const path = page.canonicalUrl ? sentPath(page.canonicalUrl) : null;
-  const query = path ? `?path=${encodeURIComponent(path)}` : "";
 
   try {
     const res = await fetch(artifactUrl(opts, `/products/${encodeURIComponent(handle)}${query}`), {
@@ -224,6 +222,22 @@ export async function fetchGeoffyProduct(
     return null;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * The `?path=` part of an item request, or `""` when there is no canonical we can send.
+ *
+ * Never throws: an unpaired UTF-16 surrogate makes `encodeURIComponent` throw, and a canonical is
+ * the caller's string — it must not be able to fail the page this package renders into.
+ */
+function pathQuery(canonicalUrl: string | undefined): string {
+  const path = canonicalUrl ? sentPath(canonicalUrl) : null;
+  if (!path) return "";
+  try {
+    return `?path=${encodeURIComponent(path)}`;
+  } catch {
+    return "";
   }
 }
 

@@ -274,8 +274,9 @@ It is optional and worth passing. Geoffy publishes content per page, against tha
 canonical URL. With `canonicalUrl` the component asks for **this page's** content, so two pages
 that share a handle each render their own: a translated route with an untranslated slug
 (`/de/programmes/data-science` and `/programmes/data-science`), or two categories that end in
-the same word. A page Geoffy has published nothing for renders nothing, and leaves an inert
-`data-geoffy-skipped` marker so a bare page can be diagnosed from view-source.
+the same word. A page Geoffy has published nothing for renders nothing. When the component
+declines because the content belongs to another page, or is in another language, it also leaves
+an inert `data-geoffy-skipped` marker, so a bare page can be diagnosed from view-source.
 
 Without it, the component asks by handle alone and gets the page with that handle that was
 published last, which on another page with the same handle is the wrong content.

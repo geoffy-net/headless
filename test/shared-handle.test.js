@@ -130,6 +130,16 @@ describe("fetchGeoffyProduct — asks for the page, not only the handle", () => 
     assert.equal(origin.itemRequests()[0].url.searchParams.get("path"), "/de/b%C3%BCro/50%2525-rabatt");
   });
 
+  it("asks by handle, and does not throw, for a canonical it cannot encode", async () => {
+    const origin = stubOrigin();
+    // An unpaired UTF-16 surrogate: `encodeURIComponent` throws on it.
+    const got = await fetchGeoffyProduct({ siteKey: "sk" }, "data-science", {
+      canonicalUrl: "/de/programmes/\uD800",
+    });
+    assert.equal(got?.canonicalUrl, EN.canonicalUrl);
+    assert.equal(origin.itemRequests()[0].url.search, "");
+  });
+
   it("sends no path without a canonical, exactly as before", async () => {
     const origin = stubOrigin();
     await fetchGeoffyProduct({ siteKey: "sk" }, "data-science");
