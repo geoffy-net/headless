@@ -185,9 +185,16 @@ https://yourdomain.com/.well-known/geoffy-site-verification.txt
 
 **Astro** — put it at `public/.well-known/geoffy-site-verification.txt`.
 
-Then run the check in Geoffy. Until it passes, every artifact endpoint returns 404 and
-nothing publishes. This is deliberate: without it, anyone who can type a domain name into a
-form could have Geoffy host content attributed to it.
+Then run the check in Geoffy. What waits for it depends on your kind of site:
+
+- **No commerce platform:** nothing waits. The check is your last setup step; Geoffy reads and
+  serves your pages before it. Passing it reserves your domain, so no other Geoffy account can
+  connect it.
+- **Shopify behind your storefront:** everything waits. Until it passes, every artifact
+  endpoint returns 404 and your store keeps publishing to its theme. Without that rule, anyone
+  who can type a domain name into a form could have Geoffy publish content attributed to it.
+
+Either way, a confirmed `/apps/geoffy` mount ("The Geoffy namespace" below) also proves ownership.
 
 **This check runs in the opposite direction to everything else in this guide** — Geoffy
 fetches your site, rather than your site fetching Geoffy. So it needs an address Geoffy can
@@ -339,6 +346,26 @@ URL pattern per locale, and publish the pages you want. Two locales may share a 
 slug need not be translated — because `canonicalUrl` tells each page apart. This needs
 `@geoffy/headless` 0.3.5 or later; an older version shows a shared handle on one page only.
 
+For example, a school serves each programme in German and English, often with the same slug:
+`/de/programmes/data-science` and `/programmes/data-science`. In Geoffy, give one pattern per
+language, `/de/programmes/{handle}` and `/programmes/{handle}`. On the page, pass the page's
+own values:
+
+```tsx
+// app/[lang]/programmes/[slug]/page.tsx — one route, every language
+<GeoffyContent
+  siteKey={process.env.GEOFFY_SITE_KEY!}
+  handle={slug}                              // "data-science" in both languages
+  locale={lang}                              // "de" or "en"
+  canonicalUrl={canonicalFor(lang, slug)}    // this page's own canonical
+/>
+```
+
+Each page then renders its own content, in its own language, and has its own plain-text twin:
+`/apps/geoffy/llm/de/programmes/data-science.md` and
+`/apps/geoffy/llm/programmes/data-science.md`. Never pass one canonical for every language:
+the canonical is what selects the page.
+
 ### 3. The site-wide files
 
 One file each, three lines each:
@@ -440,7 +467,8 @@ The freshness window is `revalidateSeconds` on the options object — `createGeo
 That is it. You now serve:
 
 ```
-https://yourdomain.com/apps/geoffy/llm/{handle}.md      each product, as plain text
+https://yourdomain.com/apps/geoffy/llm/{page path}.md   each page, as plain text, at its own path (no commerce platform)
+https://yourdomain.com/apps/geoffy/llm/{handle}.md      each product, as plain text (Shopify behind your storefront)
 https://yourdomain.com/apps/geoffy/guides/{slug}        each published buying guide
 https://yourdomain.com/apps/geoffy/guides/{slug}.md     the same guide, as plain text
 https://yourdomain.com/apps/geoffy/sitemap.xml          all of the above, listed
@@ -1138,8 +1166,10 @@ yourself.
 
 ### But verify your domain first
 
-Artifacts are served only for a **verified** site. Until ownership passes, every artifact
-endpoint returns 404, so a local run would render nothing and tell you nothing.
+With no commerce platform you need not: your site is served before its ownership check, so a
+local run shows published content at once. With Shopify behind your storefront you must: until
+ownership passes, every artifact endpoint returns 404, so a local run would render nothing and
+tell you nothing.
 
 Verification goes the other way — Geoffy fetches your site — and it needs **https, on the
 default port, on a public host name**. `localhost`, a private address and a custom port are
@@ -1251,8 +1281,12 @@ surfaces behind it — rather than advertising URLs that answer with your home p
 To see the canonical header on a plain-text twin, ask for one of your products:
 
 ```bash
+# No commerce platform: the twin lives at the page's own path
+curl -s -D - -o /dev/null https://yourdomain.com/apps/geoffy/llm/products/{handle}.md | grep -i '^link'
+# link: <https://yourdomain.com/products/{handle}>; rel="canonical"
+
+# Shopify behind your storefront: the twin lives at the handle
 curl -s -D - -o /dev/null https://yourdomain.com/apps/geoffy/llm/{handle}.md | grep -i '^link'
-# link: <https://yourdomain.com/…/products/{handle}>; rel="canonical"
 ```
 
 If the line is missing, something in front of the route removes the `Link` header.
