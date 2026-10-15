@@ -96,7 +96,8 @@ export async function GeoffyProduct({
     }
   }
 
-  const artifact = await fetchGeoffyProduct(opts, handle);
+  // The page's canonical selects ITS content when another page shares the handle.
+  const artifact = await fetchGeoffyProduct(opts, handle, { canonicalUrl });
   if (!artifact) return null;
 
   // Only when the caller supplied a canonical. Absent means "no opinion offered", which is
