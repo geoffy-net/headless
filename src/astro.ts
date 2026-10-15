@@ -90,7 +90,8 @@ export async function getGeoffyProductMarkup(
   const manifest = await fetchGeoffyManifest(opts, ASTRO_MANIFEST_MEMO_MS);
   if (manifest && !decideFromManifest(manifest, handle, page).render) return null;
 
-  const artifact = await fetchGeoffyProduct(opts, handle);
+  // The page's canonical selects ITS content when another page shares the handle.
+  const artifact = await fetchGeoffyProduct(opts, handle, { canonicalUrl: page.canonicalUrl });
   if (!artifact) return null;
 
   // Absent means "no opinion offered". `unknown` renders — an unreadable canonical is no

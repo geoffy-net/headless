@@ -167,17 +167,30 @@ function artifactUrl(opts: GeoffyClientOptions, path: string): string {
  *
  * "Not published yet" arrives two ways, and both give `null`: a successful
  * `{ published: false }` answer from a current Geoffy server, and a 404 from an older one.
+ *
+ * ## `page.canonicalUrl`
+ *
+ * A handle is the last segment of a page's URL, so two pages can share one — a translated route
+ * with an untranslated slug, or two categories that end in the same word. Pass the page's own
+ * canonical and its PATH is sent with the request, so Geoffy answers for this page rather than
+ * for whichever page with the handle was published last. A server that predates this ignores
+ * the path and answers as it always has.
  */
 export async function fetchGeoffyProduct(
   opts: GeoffyClientOptions,
   handle: string,
+  page: { canonicalUrl?: string } = {},
 ): Promise<GeoffyProductArtifact | null> {
   if (!canRequest(opts.siteKey, handle)) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 4000);
 
+  // Only a canonical we can read becomes a path. An unreadable one asks as before, by handle.
+  const path = page.canonicalUrl ? sentPath(page.canonicalUrl) : null;
+  const query = path ? `?path=${encodeURIComponent(path)}` : "";
+
   try {
-    const res = await fetch(artifactUrl(opts, `/products/${encodeURIComponent(handle)}`), {
+    const res = await fetch(artifactUrl(opts, `/products/${encodeURIComponent(handle)}${query}`), {
       signal: controller.signal,
       redirect: "error",
       // Consumed by Next; harmless elsewhere. The tag is what our purge call targets.
@@ -354,18 +367,36 @@ export type ManifestDecision =
  * - handle not listed → nothing is published for it;
  * - `locale` given and a positive language mismatch → this is a translated page;
  * - `canonicalUrl` given and its path is not the published path → another page shares the handle.
+ *
+ * Several entries can share a handle, one per published page. With `canonicalUrl`, the entry for
+ * THIS page is the one judged; without it, the first entry is, as before. A manifest from an older
+ * server lists one entry per handle, and then this decides exactly what it always decided.
  */
 export function decideFromManifest(
   manifest: GeoffyManifest,
   handle: string,
   page: { locale?: string; canonicalUrl?: string } = {},
 ): ManifestDecision {
-  const entry = manifest.products.find((p) => p.handle === handle);
-  if (!entry) return { render: false, reason: "not-published" };
+  const entries = manifest.products.filter((p) => p.handle === handle);
+  if (entries.length === 0) return { render: false, reason: "not-published" };
+  const own = page.canonicalUrl
+    ? entries.find((p) => compareCanonical(page.canonicalUrl as string, p.path) === "match")
+    : undefined;
+  // Several pages share the handle and none is this one: say so, before judging the language of
+  // a page that is not this one. (With one entry the order is the previous release's.)
+  if (
+    !own &&
+    page.canonicalUrl &&
+    entries.length > 1 &&
+    entries.every((p) => compareCanonical(page.canonicalUrl as string, p.path) === "mismatch")
+  ) {
+    return { render: false, reason: "canonical-mismatch" };
+  }
+  const entry = own ?? (entries[0] as GeoffyManifestProduct);
   if (page.locale && matchContentLanguage(page.locale, entry.language) === "mismatch") {
     return { render: false, reason: "language-mismatch" };
   }
-  if (page.canonicalUrl && compareCanonical(page.canonicalUrl, entry.path) === "mismatch") {
+  if (!own && page.canonicalUrl && compareCanonical(page.canonicalUrl, entry.path) === "mismatch") {
     return { render: false, reason: "canonical-mismatch" };
   }
   return { render: true };
@@ -447,8 +478,27 @@ export type CanonicalVerdict = "match" | "mismatch" | "unknown";
  *
  * Paths are compared case-sensitively, because they are; a trailing slash is collapsed, and
  * query and fragment are dropped, because none of the three changes which page this is.
+ * Percent-escapes are decoded with `decodeURI`, so `/de/b%C3%BCro`, `/de/b%c3%bcro` and
+ * `/de/büro` are one page, while a reserved escape such as `%2F` stays: `/a%2Fb` is not `/a/b`.
+ * Geoffy compares the path this sends by the same rule.
  */
 function canonicalPath(value: string): string | null {
+  const path = sentPath(value);
+  if (path === null) return null;
+  try {
+    return decodeURI(path);
+  } catch {
+    // A malformed escape is compared as written rather than refused.
+    return path;
+  }
+}
+
+/**
+ * The path as the canonical writes it: absolute or bare, query and fragment dropped, a trailing
+ * slash collapsed, escapes NOT decoded. This is what is sent to Geoffy, which decodes once on its
+ * side — decoding here too would turn an encoded `%` (`%25`) into a different path.
+ */
+function sentPath(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
 

@@ -270,10 +270,15 @@ pair is not separable here.
 `canonicalUrl` is **this page's own canonical** — the value you already build for
 `generateMetadata`, so pass the same one rather than a second copy of the logic.
 
-It is optional and worth passing. Geoffy publishes against one canonical URL per product, and
-this component renders wherever you mount it — so on a page that is not that URL it renders
-another page's content. Pass this and it renders nothing there instead, leaving an inert
+It is optional and worth passing. Geoffy publishes content per page, against that page's
+canonical URL. With `canonicalUrl` the component asks for **this page's** content, so two pages
+that share a handle each render their own: a translated route with an untranslated slug
+(`/de/programmes/data-science` and `/programmes/data-science`), or two categories that end in
+the same word. A page Geoffy has published nothing for renders nothing, and leaves an inert
 `data-geoffy-skipped` marker so a bare page can be diagnosed from view-source.
+
+Without it, the component asks by handle alone and gets the page with that handle that was
+published last, which on another page with the same handle is the wrong content.
 
 Only the path is compared, not the whole URL. Your site key already names your site, so
 comparing origins would add nothing and would blank a correct page while you develop against
@@ -291,18 +296,18 @@ you like — nothing in this package reads the URL, because you pass `handle` ex
 
 #### If your site serves more than one language
 
-Geoffy publishes against **one canonical URL per product**. That is the URL your product page
-names in its `<link rel="canonical">`, and it is the URL the structured data claims to
-describe.
+Geoffy publishes content **per page**, against the URL that page names in its
+`<link rel="canonical">`. Each locale of a product is its own page: Geoffy writes it in that
+page's language, and you choose which locales to publish.
 
-So Geoffy has content for **one locale of each product**, and mounting `<GeoffyProduct>` on
-every locale is the tempting mistake: the other locales render the canonical locale's widget
-and a structured-data node in the canonical locale's language, under a page written in another
-one. Nothing errors; the page simply makes a claim in the wrong language.
+Mounting `<GeoffyProduct>` on every locale without telling it which page it is on is the
+tempting mistake: a locale with nothing published can render another locale's widget and a
+structured-data node in another language. Nothing errors; the page simply makes a claim in the
+wrong language.
 
 **Pass `locale` and `canonicalUrl`, and you do not have to be careful about it.** Mount the
-component on every locale if that is simpler for you — it renders only on the page Geoffy
-published against, in the language it was written in, and does nothing on the rest:
+component on every locale if that is simpler for you — each page renders its own content, in
+the language it was written in, and a page with nothing published does nothing:
 
 ```tsx
 <GeoffyProduct
@@ -328,10 +333,10 @@ The Astro helper takes the same two values in its third argument
 (`getGeoffyProductMarkup(opts, handle, { locale, canonicalUrl })`). Astro has no data cache, so
 it keeps the list in memory for 30 seconds; a publish shows up within that window.
 
-If you want Geoffy on every locale today, the way to get it is one Geoffy site per locale —
-each with its own address, its own ownership check and its own catalogue. That works now, and
-it costs what it sounds like: a separate crawl and a separate publish for each. Per-locale
-content under a single site is not something this package can do yet. Tell us if you need it.
+Several locales under one Geoffy site work when each locale is its own page: give Geoffy a
+URL pattern per locale, and publish the pages you want. Two locales may share a handle — the
+slug need not be translated — because `canonicalUrl` tells each page apart. This needs
+`@geoffy/headless` 0.3.5 or later; an older version shows a shared handle on one page only.
 
 ### 3. The site-wide files
 
